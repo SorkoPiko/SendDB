@@ -117,7 +117,7 @@ async def sendMessage(info: list[dict], timestamp: datetime):
 
     num = len(info)
     s = "s" if num != 1 else ""
-    message = await client.sendChannel.send(content=f"**{num}** level{s} sent.\nCheck time: <t:{timestamp.timestamp()}:F> (<t:{timestamp.timestamp()}:R>)", embeds=embeds)
+    message = await client.sendChannel.send(content=f"**{num}** level{s} sent.\nCheck time: <t:{int(timestamp.timestamp())}:F> (<t:{int(timestamp.timestamp())}:R>)", embeds=embeds)
     await message.publish()
 
 @client.tree.command(name="subscribe", description="Subscribe this channel to level send notifications.")
@@ -168,7 +168,7 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 
     embed = discord.Embed(
         title=f"{levelData['name']}",
-        description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{lastSend.timestamp()}:F> (<t:{lastSend.timestamp()}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_id}) (`{level_id}`)",
+        description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{int(lastSend.timestamp())}:F> (<t:{int(lastSend.timestamp())}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_id}) (`{level_id}`)",
         color=0x00ff00
     )
     if creatorString:
