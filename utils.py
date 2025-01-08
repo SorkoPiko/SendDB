@@ -39,7 +39,7 @@ class SentChecker:
                         self.loop.call_soon_threadsafe(
                             lambda: asyncio.create_task(self.callback(levels, creators))
                         )
-                    time.sleep(10)
+                    time.sleep(1)
             except Exception as e:
                 print(f"Error in worker thread: {e}")
 
