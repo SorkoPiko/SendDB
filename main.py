@@ -57,6 +57,12 @@ async def onSendResults(levels: list[dict], creators: list[dict]):
             info += [{"_id": level_id, "name": levels[i]["name"], "creator": levels[i]["creatorID"]}]
             webhookInfo += [{"_id": level_id, "name": levels[i]["name"], "creator": creator_name, "creatorID": accountMap[levels[i]["creatorID"]], "sends": 1}]
 
+
+    previous_levels = level_ids
+    previous_creators = creator_ids
+
+    save_previous_data(previous_levels, previous_creators)
+
     db.add_sends(sends)
     db.add_info(info)
 
@@ -74,10 +80,6 @@ async def onSendResults(levels: list[dict], creators: list[dict]):
     if previous_creators != creator_ids:
         db.add_creators(creators)
 
-    previous_levels = level_ids
-    previous_creators = creator_ids
-
-    save_previous_data(previous_levels, previous_creators)
 
 checker = SentChecker(onSendResults)
 
