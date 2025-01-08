@@ -64,10 +64,10 @@ class SendDB:
         sends = self.get_collection("data", "sends")
         pipeline = [
             {"$match": {"levelID": {"$in": level_ids}}},
-            {"$group": {"_id": "$levelID", "count": {"$sum": 1}}}
+            {"$group": {"_id": "$levelID", "count": {"$sum": 1}, "latest_timestamp": {"$max": "$timestamp"}}}
         ]
         results = sends.aggregate(pipeline)
-        return {result["_id"]: result["count"] for result in results}
+        return {result["_id"]: {"count": result["count"], "latest_timestamp": result["latest_timestamp"]} for result in results}
 
     def get_creators(self, creator_ids: list[int]) -> dict:
         creators = self.get_collection("data", "creators")

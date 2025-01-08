@@ -17,28 +17,25 @@ def load_previous_data():
     if os.path.exists("previous_data.json"):
         with open("previous_data.json", "r") as file:
             data = json.load(file)
-            return data.get("previous_levels", []), data.get("previous_creators", [])
-    return [], []
+            return data.get("previous_levels", [])
+    return []
 
-def save_previous_data(levels, creators):
+def save_previous_data(levels):
     data = {
-        "previous_levels": levels,
-        "previous_creators": creators
+        "previous_levels": levels
     }
     with open("previous_data.json", "w") as file:
         json.dump(data, file)
 
-previous_levels, previous_creators = load_previous_data()
+previous_levels = load_previous_data()
 
 async def onSendResults(levels: list[dict], creators: list[dict]):
     global previous_levels
-    global previous_creators
 
     timestamp = datetime.now(UTC)
 
     creatorMap = {creator["_id"]: creator["name"] for creator in creators}
     accountMap = {creator["_id"]: creator["accountID"] for creator in creators}
-    creator_ids = [creator["_id"] for creator in creators]
     level_ids = [level["_id"] for level in levels]
 
     sends = []
@@ -59,15 +56,15 @@ async def onSendResults(levels: list[dict], creators: list[dict]):
 
 
     previous_levels = level_ids
-    previous_creators = creator_ids
 
-    save_previous_data(previous_levels, previous_creators)
+    save_previous_data(previous_levels)
 
     db.add_sends(sends)
     db.add_info(info)
 
     if webhookInfo:
         print("New sent levels!")
+        db.add_creators(creators)
         checkIds = [level["_id"] for level in webhookInfo]
         sendMap = db.get_sends(checkIds)
         for sendID, sendCount in sendMap.items():
@@ -76,10 +73,6 @@ async def onSendResults(levels: list[dict], creators: list[dict]):
                     level["sends"] = sendCount
 
         await sendMessage(webhookInfo, timestamp)
-
-    if previous_creators != creator_ids:
-        db.add_creators(creators)
-
 
 checker = SentChecker(onSendResults)
 
@@ -124,7 +117,7 @@ async def sendMessage(info: list[dict], timestamp: datetime):
 
     num = len(info)
     s = "s" if num != 1 else ""
-    message = await client.sendChannel.send(content=f"**{num}** level{s} sent.\nCheck time: <t:{int(timestamp.timestamp())}:F> (<t:{int(timestamp.timestamp())}:R>)", embeds=embeds)
+    message = await client.sendChannel.send(content=f"**{num}** level{s} sent.\nCheck time: <t:{timestamp.timestamp()}:F> (<t:{timestamp.timestamp()}:R>)", embeds=embeds)
     await message.publish()
 
 @client.tree.command(name="subscribe", description="Subscribe this channel to level send notifications.")
@@ -149,7 +142,8 @@ async def check_level(interaction: discord.Interaction, level_id: int):
     if level_id not in sendData:
         await interaction.response.send_message(f"❌ Level `{level_id}` has no sends.", ephemeral=True)
         return
-    sendCount = sendData[level_id]
+    sendCount = sendData[level_id]["count"]
+    lastSend: datetime = sendData[level_id]["latest_timestamp"]
 
     infoData = db.get_info([level_id])
     if level_id not in infoData:
@@ -174,7 +168,7 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 
     embed = discord.Embed(
         title=f"{levelData['name']}",
-        description=f"{creatorString}Total Sends: **{sendCount}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_id}) (`{level_id}`)",
+        description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{lastSend.timestamp()}:F> (<t:{lastSend.timestamp()}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_id}) (`{level_id}`)",
         color=0x00ff00
     )
     if creatorString:
