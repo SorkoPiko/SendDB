@@ -1,8 +1,8 @@
+from pymongo import UpdateOne
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from pymongo.collection import Collection
 from pymongo.database import Database
-from pymongo.errors import DuplicateKeyError
 from datetime import datetime
 
 class SendDB:
@@ -24,54 +24,65 @@ class SendDB:
         db = self.get_database(db_name)
         return db[collection_name]
 
-    def add_send(self, id: int, timestamp: datetime, mod: int = None):
-        sends = self.get_collection("data", "sends")
-
-        sendDict = {
-            "_id": id,
-            "timestamp": timestamp
-        }
-
-        if mod:
-            sendDict["mod"] = mod
-
-        try:
-            sends.insert_one(sendDict)
-        except DuplicateKeyError:
-            pass
-
     def add_sends(self, sends: list[dict]):
         if not sends: return
 
-        sends = self.get_collection("data", "sends")
-        sends.insert_many(sends)
+        sends_collection = self.get_collection("data", "sends")
+        sends_collection.insert_many(sends)
 
-    def add_creator(self, id: int, name: str):
-        creators = self.get_collection("data", "creators")
-        creators.insert_one({"_id": id, "name": name})
+    def add_info(self, info: list[dict]):
+        if not info: return
+
+        info_collection = self.get_collection("data", "info")
+        operations = [
+            UpdateOne(
+                {"_id": item["_id"]},
+                {"$set": item},
+                upsert=True
+            ) for item in info
+        ]
+        info_collection.bulk_write(operations)
 
     def add_creators(self, creators: list[dict]):
         if not creators: return
 
-        creators = self.get_collection("data", "creators")
-        creators.insert_many(creators)
+        creators_collection = self.get_collection("data", "creators")
+        operations = [
+            UpdateOne(
+                {"_id": creator["_id"]},
+                {"$set": creator},
+                upsert=True
+            ) for creator in creators
+        ]
+        creators_collection.bulk_write(operations)
 
     def set_mod(self, id: int, timestamp: datetime, mod: int):
         sends = self.get_collection("data", "sends")
         sends.update_one({"_id": id, "timestamp": timestamp}, {"$set": {"mod": mod}})
 
-    def get_sends(self, id: int) -> dict:
+    def get_sends(self, level_ids: list[int]) -> dict:
         sends = self.get_collection("data", "sends")
-        sendsRaw = sends.find({"_id": id})
-        sends = {}
-        for send in sendsRaw:
-            sendDict = {
-                "timestamp": send["timestamp"]
-            }
+        pipeline = [
+            {"$match": {"levelID": {"$in": level_ids}}},
+            {"$group": {"_id": "$levelID", "count": {"$sum": 1}}}
+        ]
+        results = sends.aggregate(pipeline)
+        return {result["_id"]: result["count"] for result in results}
 
-            if "mod" in send:
-                sendDict["mod"] = send["mod"]
+    def get_creators(self, creator_ids: list[int]) -> dict:
+        creators = self.get_collection("data", "creators")
+        pipeline = [
+            {"$match": {"_id": {"$in": creator_ids}}},
+            {"$project": {"_id": 1, "name": 1, "accountID": 1}}
+        ]
+        results = creators.aggregate(pipeline)
+        return {result["_id"]: {"name": result["name"], "accountID": result["accountID"]} for result in results}
 
-            sends[send["_id"]] = sendDict
-
-        return sends
+    def get_info(self, level_ids: list[int]) -> dict:
+        info = self.get_collection("data", "info")
+        pipeline = [
+            {"$match": {"_id": {"$in": level_ids}}},
+            {"$project": {"_id": 1, "name": 1, "creator": 1}}
+        ]
+        results = info.aggregate(pipeline)
+        return {result["_id"]: {"name": result["name"], "creator": result["creator"]} for result in results}

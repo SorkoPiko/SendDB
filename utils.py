@@ -34,19 +34,19 @@ class SentChecker:
                     if not self.running.is_set():
                         break
 
-                    result = self.getSentLevels()
+                    levels, creators = self.getSentLevels()
                     if self.running.is_set() and self.loop and not self.loop.is_closed():
                         self.loop.call_soon_threadsafe(
-                            lambda: asyncio.create_task(self.callback(result))
+                            lambda: asyncio.create_task(self.callback(levels, creators))
                         )
-                    time.sleep(1)
+                    time.sleep(10)
             except Exception as e:
                 print(f"Error in worker thread: {e}")
 
     @staticmethod
-    def getSentLevels() -> list[int]:
+    def getSentLevels() -> [list[dict], list[dict]]:
         data = {
-            "type": 27,
+            "type": 27, # new sent levels type i think
             "secret": "Wmfd2893gb7"
         }
 
@@ -55,7 +55,6 @@ class SentChecker:
         }
 
         req = requests.post('http://www.boomlings.com/database/getGJLevels21.php', data=data, headers=headers)
-        print(req.text)
 
         if req.text == "-1": return []
 
@@ -71,7 +70,7 @@ class SentChecker:
             levels.append({
                 "_id": int(data["1"]),
                 "name": data["2"],
-                "creatorID": data["6"]
+                "creatorID": int(data["6"])
             })
 
         creators = []
@@ -79,7 +78,9 @@ class SentChecker:
         for creator in rawCreators:
             parts = creator.split(":")
             creators.append({
-                "_id": int(data["1"]),
-                "name": data["2"]
+                "_id": int(parts[0]),
+                "name": parts[1],
+                "accountID": int(parts[2])
             })
 
+        return levels, creators

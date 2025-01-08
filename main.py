@@ -2,8 +2,9 @@ import asyncio
 
 from dotenv import load_dotenv
 from os import environ
-import discord
+import discord, os, json
 from discord.ext import commands
+from discord import app_commands
 from datetime import datetime, UTC
 
 from db import SendDB
@@ -12,30 +13,78 @@ from utils import SentChecker
 load_dotenv()
 db = SendDB(f"mongodb+srv://{environ.get('MONGO_USERNAME')}:{environ.get('MONGO_PASSWORD')}@{environ.get('MONGO_ENDPOINT')}")
 
-previous_results = []
+def load_previous_data():
+    if os.path.exists("previous_data.json"):
+        with open("previous_data.json", "r") as file:
+            data = json.load(file)
+            return data.get("previous_levels", []), data.get("previous_creators", [])
+    return [], []
 
-async def onSendResults(results: list[int]):
-    global previous_results
+def save_previous_data(levels, creators):
+    data = {
+        "previous_levels": levels,
+        "previous_creators": creators
+    }
+    with open("previous_data.json", "w") as file:
+        json.dump(data, file)
+
+previous_levels, previous_creators = load_previous_data()
+
+async def onSendResults(levels: list[dict], creators: list[dict]):
+    global previous_levels
+    global previous_creators
+
     timestamp = datetime.now(UTC)
+
+    creatorMap = {creator["_id"]: creator["name"] for creator in creators}
+    accountMap = {creator["_id"]: creator["accountID"] for creator in creators}
+    creator_ids = [creator["_id"] for creator in creators]
+    level_ids = [level["_id"] for level in levels]
+
     sends = []
-    for i, level_id in enumerate(results):
-        if level_id in previous_results: previous_index = previous_results.index(level_id)
+    info = []
+    webhookInfo = []
+    for i, level_id in enumerate(level_ids):
+        if level_id in previous_levels: previous_index = previous_levels.index(level_id)
         else: previous_index = 99
 
-        print(f"Level ID: {level_id}, Index: {i}, Previous Index: {previous_index}")
-
         if i < previous_index:
-            sends += [{"_id": level_id, "timestamp": timestamp}]
+            creator_id = levels[i]["creatorID"]
+            creator_name = creatorMap[creator_id]
+            if not creator_name: creator_name = "Unknown"
+
+            sends += [{"levelID": level_id, "timestamp": timestamp}]
+            info += [{"_id": level_id, "name": levels[i]["name"], "creator": levels[i]["creatorID"]}]
+            webhookInfo += [{"_id": level_id, "name": levels[i]["name"], "creator": creator_name, "creatorID": accountMap[levels[i]["creatorID"]], "sends": 1}]
 
     db.add_sends(sends)
+    db.add_info(info)
 
-    previous_results = results
+    if webhookInfo:
+        print("New sent levels!")
+        checkIds = [level["_id"] for level in webhookInfo]
+        sendMap = db.get_sends(checkIds)
+        for sendID, sendCount in sendMap.items():
+            for level in webhookInfo:
+                if level["_id"] == sendID:
+                    level["sends"] = sendCount
+
+        await sendMessage(webhookInfo, timestamp)
+
+    if previous_creators != creator_ids:
+        db.add_creators(creators)
+
+    previous_levels = level_ids
+    previous_creators = creator_ids
+
+    save_previous_data(previous_levels, previous_creators)
 
 checker = SentChecker(onSendResults)
 
 class SendBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='=', intents=discord.Intents.none())
+        self.sendChannel: discord.TextChannel = None
         self.synced = False
 
     async def on_ready(self):
@@ -43,7 +92,11 @@ class SendBot(commands.Bot):
         if not self.synced:
             await self.tree.sync()
             self.synced = True
-        await self.change_presence(activity=discord.Activity(name='Geometry Dash', type=discord.activity.ActivityType.watching),status=discord.Status.online)
+        await self.change_presence(activity=discord.Activity(name='Sent Levels', type=discord.ActivityType.watching), status=discord.Status.online)
+        self.sendChannel = (self.get_channel(int(environ.get('SEND_CHANNEL_ID'))) or await self.fetch_channel(int(environ.get('SEND_CHANNEL_ID'))))
+        if self.sendChannel is None or not self.sendChannel.is_news():
+            print("Send channel not found or not news.")
+
         checker.start(asyncio.get_running_loop())
         print(f"We have logged in as {self.user}.")
 
@@ -52,4 +105,80 @@ class SendBot(commands.Bot):
         await super().close()
 
 client = SendBot()
+
+
+async def sendMessage(info: list[dict], timestamp: datetime):
+    embeds = []
+    for level in info:
+        embed = discord.Embed(
+            title=level["name"],
+            description=f"By **{level['creator']}** ({level['creatorID']})\nTotal Sends: **{level['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level['_id']}) (`{level['_id']}`)",
+            color=0x00ff00
+        )
+        embed.set_author(name=level["creator"], url=f"https://gdbrowser.com/u/{level['creatorID']}", icon_url="https://gdbrowser.com/assets/cp.png")
+        embed.timestamp = timestamp
+
+        embeds.append(embed)
+
+    num = len(info)
+    s = "s" if num != 1 else ""
+    message = await client.sendChannel.send(content=f"**{num}** level{s} sent.\nCheck time: <t:{int(timestamp.timestamp())}:F> (<t:{int(timestamp.timestamp())}:R>)", embeds=embeds)
+    await message.publish()
+
+@client.tree.command(name="subscribe", description="Subscribe this channel to level send notifications.")
+@commands.has_permissions(manage_channels=True)
+async def subscribe(interaction: discord.Interaction):
+    if client.sendChannel is None:
+        await interaction.response.send_message("❌ Internal error.", ephemeral=True)
+        return
+
+    try:
+        await client.sendChannel.follow(destination=interaction.channel, reason=f"{interaction.user.id} subscribed to level send notifications.")
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ Missing permissions", ephemeral=True)
+        return
+
+    await interaction.response.send_message("✅ Subscribed to level send notifications.",ephemeral=True)
+
+@client.tree.command(name="check-level", description="Check a level's sends.")
+@app_commands.describe(level_id="The level's ID.")
+async def check_level(interaction: discord.Interaction, level_id: int):
+    sendData = db.get_sends([level_id])
+    if level_id not in sendData:
+        await interaction.response.send_message(f"❌ Level `{level_id}` has no sends.", ephemeral=True)
+        return
+    sendCount = sendData[level_id]
+
+    infoData = db.get_info([level_id])
+    if level_id not in infoData:
+        levelData = {
+            "_id": level_id,
+            "name": level_id
+        }
+        creatorString = ""
+
+    else:
+        levelData = infoData[level_id]
+        creatorData = db.get_creators([levelData["creator"]])
+
+        if levelData["creator"] not in creatorData:
+            levelData["creatorName"] = "Unknown"
+            creatorString = ""
+
+        else:
+            levelData["creatorName"] = creatorData[levelData["creator"]]["name"]
+            levelData["accountID"] = creatorData[levelData["creator"]]["accountID"]
+            creatorString = f"By **{levelData['creatorName']}** ({levelData['creator']})\n"
+
+    embed = discord.Embed(
+        title=f"{levelData['name']}",
+        description=f"{creatorString}Total Sends: **{sendCount}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_id}) (`{level_id}`)",
+        color=0x00ff00
+    )
+    if creatorString:
+        embed.set_author(name=levelData["creatorName"], url=f"https://gdbrowser.com/u/{levelData['accountID']}", icon_url="https://gdbrowser.com/assets/cp.png")
+
+    await interaction.response.send_message(embed=embed)
+
+
 client.run(environ.get("BOT_TOKEN"))
