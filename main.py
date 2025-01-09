@@ -70,7 +70,7 @@ async def onSendResults(levels: list[dict], creators: list[dict]):
         for sendID, sendCount in sendMap.items():
             for level in webhookInfo:
                 if level["_id"] == sendID:
-                    level["sends"] = sendCount
+                    level["sends"] = sendCount["count"]
 
         await sendMessage(webhookInfo, timestamp)
 
