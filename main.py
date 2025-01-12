@@ -29,7 +29,7 @@ def save_previous_data(levels):
 
 previous_levels = load_previous_data()
 
-async def onSendResults(levels: list[dict], creators: list[dict]):
+async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[int]):
     global previous_levels
 
     timestamp = datetime.now(UTC)
@@ -41,38 +41,60 @@ async def onSendResults(levels: list[dict], creators: list[dict]):
     sends = []
     info = []
     webhookInfo = []
+
     for i, level_id in enumerate(level_ids):
-        if level_id in previous_levels: previous_index = previous_levels.index(level_id)
-        else: previous_index = 99
+        if level_id in previous_levels:
+            previous_index = previous_levels.index(level_id)
+        else:
+            previous_index = 99
 
+        # Check if this level appears earlier than before
         if i < previous_index:
-            creator_id = levels[i]["creatorID"]
-            creator_name = creatorMap[creator_id]
-            if not creator_name: creator_name = "Unknown"
+            # For each position between the new and old position,
+            # check if the level that was there was rated
+            skip_this_level = False
+            for pos in range(i, previous_index):
+                if pos < len(previous_levels):
+                    old_level_id = previous_levels[pos]
+                    # If we find an unrated level that disappeared, skip this one
+                    if old_level_id not in level_ids and old_level_id not in rated_levels:
+                        skip_this_level = True
+                        break
 
-            sends += [{"levelID": level_id, "timestamp": timestamp}]
-            info += [{"_id": level_id, "name": levels[i]["name"], "creator": levels[i]["creatorID"]}]
-            webhookInfo += [{"_id": level_id, "name": levels[i]["name"], "creator": creator_name, "creatorID": accountMap[levels[i]["creatorID"]], "sends": 1}]
+            if not skip_this_level:
+                creator_id = levels[i]["creatorID"]
+                creator_name = creatorMap[creator_id]
+                if not creator_name:
+                    creator_name = "Unknown"
 
+                sends += [{"levelID": level_id, "timestamp": timestamp}]
+                info += [{"_id": level_id, "name": levels[i]["name"], "creator": levels[i]["creatorID"]}]
+                webhookInfo += [{
+                    "_id": level_id,
+                    "name": levels[i]["name"],
+                    "creator": creator_name,
+                    "creatorID": accountMap[levels[i]["creatorID"]],
+                    "sends": 1
+                }]
 
     previous_levels = level_ids
-
     save_previous_data(previous_levels)
 
-    db.add_sends(sends)
-    db.add_info(info)
+    if sends:
+        db.add_sends(sends)
+        db.add_info(info)
 
-    if webhookInfo:
-        print("New sent levels!")
-        db.add_creators(creators)
-        checkIds = [level["_id"] for level in webhookInfo]
-        sendMap = db.get_sends(checkIds)
-        for sendID, sendCount in sendMap.items():
-            for level in webhookInfo:
-                if level["_id"] == sendID:
-                    level["sends"] = sendCount["count"]
+        if webhookInfo:
+            print("New sent levels!")
+            db.add_creators(creators)
+            checkIds = [level["_id"] for level in webhookInfo]
+            sendMap = db.get_sends(checkIds)
+            for sendID, sendCount in sendMap.items():
+                for level in webhookInfo:
+                    if level["_id"] == sendID:
+                        level["sends"] = sendCount["count"]
 
-        await sendMessage(webhookInfo, timestamp)
+            await sendMessage(webhookInfo, timestamp)
 
 checker = SentChecker(onSendResults)
 

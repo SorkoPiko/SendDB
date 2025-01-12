@@ -35,18 +35,19 @@ class SentChecker:
                         break
 
                     levels, creators = self.getSentLevels()
+                    rated_levels = self.getRatedLevels()
                     if self.running.is_set() and self.loop and not self.loop.is_closed():
                         self.loop.call_soon_threadsafe(
-                            lambda: asyncio.create_task(self.callback(levels, creators))
+                            lambda: asyncio.create_task(self.callback(levels, creators, rated_levels))
                         )
-                    time.sleep(1)
+                    time.sleep(2)
             except Exception as e:
                 print(f"Error in worker thread: {e}")
 
     @staticmethod
-    def getSentLevels() -> [list[dict], list[dict]]:
+    def getSentLevels() -> tuple[list[dict], list[dict]]:
         data = {
-            "type": 27, # new sent levels type i think
+            "type": 27,  # new sent levels type
             "secret": "Wmfd2893gb7"
         }
 
@@ -56,7 +57,7 @@ class SentChecker:
 
         req = requests.post('http://www.boomlings.com/database/getGJLevels21.php', data=data, headers=headers)
 
-        if req.text == "-1": return []
+        if req.text == "-1": return [], []
 
         parsed = req.text.split("#")
         rawLevels = parsed[0].split("|")
@@ -84,3 +85,29 @@ class SentChecker:
             })
 
         return levels, creators
+
+    @staticmethod
+    def getRatedLevels() -> list[int]:
+        data = {
+            "type": 11,  # rated levels type
+            "secret": "Wmfd2893gb7"
+        }
+
+        headers = {
+            "User-Agent": ""
+        }
+
+        req = requests.post('http://www.boomlings.com/database/getGJLevels21.php', data=data, headers=headers)
+
+        if req.text == "-1": return []
+
+        parsed = req.text.split("#")
+        rawLevels = parsed[0].split("|")
+
+        rated_level_ids = []
+        for level in rawLevels:
+            parts = level.split(":")
+            data = {parts[i]: parts[i + 1] for i in range(0, len(parts), 2)}
+            rated_level_ids.append(int(data["1"]))
+
+        return rated_level_ids
