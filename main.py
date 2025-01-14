@@ -45,12 +45,16 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
     # Check which levels from previous_levels are no longer in the current list
     disappeared_levels = [level_id for level_id in previous_levels if level_id not in level_ids]
 
+    ignoreIndex = len(level_ids)
     for id in disappeared_levels:
         if id in rated_levels:
             previous_levels.remove(id)
-            level_ids.pop()
+            ignoreIndex -= 1
 
     for i, level_id in enumerate(level_ids):
+        if i >= ignoreIndex:
+            break
+
         if level_id in previous_levels:
             previous_index = previous_levels.index(level_id)
         else:
