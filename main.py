@@ -30,6 +30,9 @@ def save_previous_data(levels):
 previous_levels = load_previous_data()
 
 async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[int]):
+    if not levels or not creators or not rated_levels:
+        print("No data received.")
+        return
     global previous_levels
 
     timestamp = datetime.now(UTC)
