@@ -296,7 +296,8 @@ class LeaderboardView(View):
     async def find_page_for_id(self, search_id: int) -> int:
         """Find the page number containing the given ID"""
         if self.type == LeaderboardType.CREATORS:
-            pipeline = [
+            # First get the sends count for the target creator
+            target_pipeline = [
                 {"$group": {
                     "_id": "$levelID",
                     "count": {"$sum": 1}
@@ -312,51 +313,88 @@ class LeaderboardView(View):
                     "_id": "$level_info.creator",
                     "sends": {"$sum": "$count"}
                 }},
-                {"$lookup": {
-                    "from": "creators",
-                    "localField": "_id",
-                    "foreignField": "_id",
-                    "as": "creator_info"
-                }},
-                {"$unwind": "$creator_info"},
-                {"$sort": {"sends": -1}},
-                {"$group": {
-                    "_id": None,
-                    "position": {
-                        "$push": "$_id"
-                    }
-                }},
-                {"$project": {
-                    "index": {
-                        "$indexOf": ["$position", search_id]
-                    }
+                {"$match": {
+                    "_id": search_id
                 }}
             ]
+
+            target_result = db.raw_pipeline("sends", target_pipeline)
+            if not target_result:
+                return None
+
+            target_sends = target_result[0]["sends"]
+
+            # Then count how many creators have more sends
+            position_pipeline = [
+                {"$group": {
+                    "_id": "$levelID",
+                    "count": {"$sum": 1}
+                }},
+                {"$lookup": {
+                    "from": "info",
+                    "localField": "_id",
+                    "foreignField": "_id",
+                    "as": "level_info"
+                }},
+                {"$unwind": "$level_info"},
+                {"$group": {
+                    "_id": "$level_info.creator",
+                    "sends": {"$sum": "$count"}
+                }},
+                {"$match": {
+                    "$or": [
+                        {"sends": {"$gt": target_sends}},
+                        {
+                            "$and": [
+                                {"sends": {"$eq": target_sends}},
+                                {"_id": {"$lt": search_id}}
+                            ]
+                        }
+                    ]
+                }},
+                {"$count": "position"}
+            ]
         else:
-            pipeline = [
+            # First get the sends count for the target level
+            target_pipeline = [
                 {"$group": {
                     "_id": "$levelID",
                     "sends": {"$sum": 1}
                 }},
-                {"$sort": {"sends": -1}},
-                {"$group": {
-                    "_id": None,
-                    "position": {
-                        "$push": "$_id"
-                    }
-                }},
-                {"$project": {
-                    "index": {
-                        "$indexOf": ["$position", search_id]
-                    }
+                {"$match": {
+                    "_id": search_id
                 }}
             ]
 
-        result = db.raw_pipeline("sends", pipeline)
-        if not result or result[0]["index"] == -1:
-            return None
+            target_result = db.raw_pipeline("sends", target_pipeline)
+            if not target_result:
+                return None
 
-        position = result[0]["index"]
+            target_sends = target_result[0]["sends"]
+
+            # Then count how many levels have more sends
+            position_pipeline = [
+                {"$group": {
+                    "_id": "$levelID",
+                    "sends": {"$sum": 1}
+                }},
+                {"$match": {
+                    "$or": [
+                        {"sends": {"$gt": target_sends}},
+                        {
+                            "$and": [
+                                {"sends": {"$eq": target_sends}},
+                                {"_id": {"$lt": search_id}}
+                            ]
+                        }
+                    ]
+                }},
+                {"$count": "position"}
+            ]
+
+        position_result = db.raw_pipeline("sends", position_pipeline)
+        position = position_result[0]["position"] if position_result else 0
+
         return position // self.page_size
 
     def update_buttons(self):
