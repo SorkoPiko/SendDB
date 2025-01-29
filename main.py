@@ -9,6 +9,7 @@ from discord import app_commands
 from datetime import datetime, UTC
 from typing import List, Dict
 from math import ceil
+from enum import Enum
 
 from db import SendDB
 from utils import SentChecker
@@ -127,31 +128,154 @@ class SendBot(commands.Bot):
 
 client = SendBot()
 
+class LeaderboardType(Enum):
+    CREATORS = "Creators"
+    LEVELS = "Levels"
+
+class PageModal(discord.ui.Modal, title="Go to Page"):
+    def __init__(self, max_pages: int):
+        super().__init__()
+        self.page_number = discord.ui.TextInput(
+            label="Page Number",
+            placeholder=f"Enter a page number (1-{max_pages})",
+            min_length=1,
+            max_length=len(str(max_pages))
+        )
+        self.add_item(self.page_number)
+        self.max_pages = max_pages
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            page = int(self.page_number.value)
+            if 1 <= page <= self.max_pages:
+                self.page = page - 1  # Convert to 0-based index
+                await interaction.response.defer()
+            else:
+                await interaction.response.send_message(f"Please enter a number between 1 and {self.max_pages}", ephemeral=True)
+                self.page = None
+        except ValueError:
+            await interaction.response.send_message("Please enter a valid number", ephemeral=True)
+            self.page = None
+
+class TypeSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Creator Leaderboard", value="CREATORS", description="Show sends by creator"),
+            discord.SelectOption(label="Level Leaderboard", value="LEVELS", description="Show sends by level")
+        ]
+        super().__init__(placeholder="Select leaderboard type...", options=options)
+
 class LeaderboardView(View):
-    def __init__(self, db: SendDB, page_size: int = 10):
+    def __init__(self, db: SendDB, owner_id: int, page_size: int = 10):
         super().__init__(timeout=180)
         self.db = db
+        self.owner_id = owner_id
         self.page_size = page_size
         self.current_page = 0
-        self.cached_data = None
         self.total_count = 0
+        self.type = LeaderboardType.CREATORS
 
-    async def get_page_data(self) -> List[Dict]:
+        # Add type selector
+        self.type_select = TypeSelect()
+        self.add_item(self.type_select)
+
+    def get_pipeline_for_type(self, skip: int, limit: int) -> list[dict]:
+        if self.type == LeaderboardType.CREATORS:
+            return [
+                {"$group": {
+                    "_id": "$levelID",
+                    "count": {"$sum": 1}
+                }},
+                {"$lookup": {
+                    "from": "info",
+                    "localField": "_id",
+                    "foreignField": "_id",
+                    "as": "level_info"
+                }},
+                {"$unwind": "$level_info"},
+                {"$group": {
+                    "_id": "$level_info.creator",
+                    "sends": {"$sum": "$count"}
+                }},
+                {"$facet": {
+                    "total": [{"$count": "count"}],
+                    "data": [
+                        {"$lookup": {
+                            "from": "creators",
+                            "localField": "_id",
+                            "foreignField": "_id",
+                            "as": "creator_info"
+                        }},
+                        {"$unwind": "$creator_info"},
+                        {"$project": {
+                            "name": "$creator_info.name",
+                            "accountID": "$creator_info.accountID",
+                            "sends": 1
+                        }},
+                        {"$sort": {"sends": -1}},
+                        {"$skip": skip},
+                        {"$limit": limit}
+                    ]
+                }}
+            ]
+        else:  # LeaderboardType.LEVELS
+            return [
+                {"$group": {
+                    "_id": "$levelID",
+                    "sends": {"$sum": 1}
+                }},
+                {"$facet": {
+                    "total": [{"$count": "count"}],
+                    "data": [
+                        {"$lookup": {
+                            "from": "info",
+                            "localField": "_id",
+                            "foreignField": "_id",
+                            "as": "level_info"
+                        }},
+                        {"$unwind": "$level_info"},
+                        {"$lookup": {
+                            "from": "creators",
+                            "localField": "level_info.creator",
+                            "foreignField": "_id",
+                            "as": "creator_info"
+                        }},
+                        {"$unwind": "$creator_info"},
+                        {"$project": {
+                            "name": "$level_info.name",
+                            "creator": "$creator_info.name",
+                            "creatorID": "$creator_info.accountID",
+                            "levelID": "$_id",
+                            "sends": 1
+                        }},
+                        {"$sort": {"sends": -1}},
+                        {"$skip": skip},
+                        {"$limit": limit}
+                    ]
+                }}
+            ]
+
+    async def get_page_data(self) -> tuple[list[dict], int]:
         skip = self.current_page * self.page_size
-        data, self.total_count = self.db.get_leaderboard(skip, self.page_size)
-        self.max_pages = ceil(self.total_count / self.page_size)
-        return data
+        pipeline = self.get_pipeline_for_type(skip, self.page_size)
+
+        result = db.raw_pipeline("sends", pipeline)
+        if not result or not result[0]["total"]:
+            return [], 0
+
+        return result[0]["data"], result[0]["total"][0]["count"]
 
     def update_buttons(self):
         self.prev_button.disabled = self.current_page == 0
         self.next_button.disabled = self.current_page >= self.max_pages - 1
 
     async def get_embed(self) -> discord.Embed:
-        page_data = await self.get_page_data()
+        page_data, self.total_count = await self.get_page_data()
+        self.max_pages = ceil(self.total_count / self.page_size)
 
         embed = discord.Embed(
-            title="Send Leaderboard",
-            description="Players with the most level sends",
+            title=f"{self.type.value} Leaderboard",
+            description=f"Most {'level sends by creator' if self.type == LeaderboardType.CREATORS else 'sent levels'}",
             color=0x00ff00
         )
 
@@ -166,14 +290,30 @@ class LeaderboardView(View):
             elif idx == 3:
                 medal = "🥉"
 
-            embed.add_field(
-                name=f"{medal}#{idx}. {entry['name']} ({entry['accountID']})",
-                value=f"Total Sends: **{entry['sends']}**",
-                inline=False
-            )
+            if self.type == LeaderboardType.CREATORS:
+                embed.add_field(
+                    name=f"{medal}#{idx}. {entry['name']} ({entry['accountID']})",
+                    value=f"Total Sends: **{entry['sends']}**",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name=f"{medal}#{idx}. {entry['name']} ({entry['levelID']})",
+                    value=f"By **{entry['creator']}** ({entry['creatorID']})\nTotal Sends: **{entry['sends']}**",
+                    inline=False
+                )
 
-        embed.set_footer(text=f"Page {self.current_page + 1}/{self.max_pages} • Total Players: {self.total_count}")
+        embed.set_footer(text=f"Page {self.current_page + 1}/{self.max_pages} • Total {'Players' if self.type == LeaderboardType.CREATORS else 'Levels'}: {self.total_count}")
         return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.owner_id
+
+    @discord.ui.button(label="Top", style=discord.ButtonStyle.primary, emoji="⬆️")
+    async def top_button(self, interaction: discord.Interaction, button: Button):
+        self.current_page = 0
+        self.update_buttons()
+        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="⬅️")
     async def prev_button(self, interaction: discord.Interaction, button: Button):
@@ -187,6 +327,17 @@ class LeaderboardView(View):
         self.update_buttons()
         await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
+    @discord.ui.button(label="Go to...", style=discord.ButtonStyle.secondary)
+    async def goto_button(self, interaction: discord.Interaction, button: Button):
+        modal = PageModal(self.max_pages)
+        await interaction.response.send_modal(modal)
+        await modal.wait()
+
+        if modal.page is not None:
+            self.current_page = modal.page
+            self.update_buttons()
+            await interaction.edit_original_response(embed=await self.get_embed(), view=self)
+
     async def on_timeout(self):
         for item in self.children:
             item.disabled = True
@@ -194,6 +345,12 @@ class LeaderboardView(View):
             await self.message.edit(view=self)
         except:
             pass
+
+    async def callback(self, interaction: discord.Interaction):
+        self.type = LeaderboardType[self.type_select.values[0]]
+        self.current_page = 0
+        self.update_buttons()
+        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
 async def sendMessage(info: list[dict], timestamp: datetime):
     embeds = []
@@ -271,8 +428,7 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 
 @client.tree.command(name="leaderboard", description="Show the send leaderboard.")
 async def leaderboard(interaction: discord.Interaction):
-    view = LeaderboardView(db)
-
+    view = LeaderboardView(db, interaction.user.id)
     await interaction.response.send_message(embed=await view.get_embed(), view=view)
     view.message = await interaction.original_response()
 
