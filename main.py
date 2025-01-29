@@ -240,7 +240,10 @@ class LeaderboardView(View):
                             "accountID": "$creator_info._id",
                             "sends": 1
                         }},
-                        {"$sort": {"sends": -1}},
+                        {"$sort": {
+                            "sends": -1,
+                            "_id": 1
+                        }},
                         {"$skip": skip},
                         {"$limit": limit}
                     ]
@@ -276,7 +279,10 @@ class LeaderboardView(View):
                             "levelID": "$_id",
                             "sends": 1
                         }},
-                        {"$sort": {"sends": -1}},
+                        {"$sort": {
+                            "sends": -1,
+                            "_id": 1
+                        }},
                         {"$skip": skip},
                         {"$limit": limit}
                     ]
@@ -319,7 +325,10 @@ class LeaderboardView(View):
                     "as": "creator_info"
                 }},
                 {"$unwind": "$creator_info"},
-                {"$sort": {"sends": -1}},
+                {"$sort": {
+                    "sends": -1,
+                    "_id": 1
+                }},
                 {"$group": {
                     "_id": None,
                     "position": {
@@ -338,7 +347,10 @@ class LeaderboardView(View):
                     "_id": "$levelID",
                     "sends": {"$sum": 1}
                 }},
-                {"$sort": {"sends": -1}},
+                {"$sort": {
+                    "sends": -1,
+                    "_id": 1
+                }},
                 {"$group": {
                     "_id": None,
                     "position": {
@@ -358,7 +370,6 @@ class LeaderboardView(View):
 
         position = result[0]["index"]
         return position // self.page_size
-
 
     def update_buttons(self):
         self.prev_button.disabled = self.current_page == 0
