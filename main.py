@@ -4,8 +4,11 @@ from dotenv import load_dotenv
 from os import environ
 import discord, os, json
 from discord.ext import commands
+from discord.ui import Button, View
 from discord import app_commands
 from datetime import datetime, UTC
+from typing import List, Dict
+from math import ceil
 
 from db import SendDB
 from utils import SentChecker
@@ -124,6 +127,73 @@ class SendBot(commands.Bot):
 
 client = SendBot()
 
+class LeaderboardView(View):
+    def __init__(self, db: SendDB, page_size: int = 10):
+        super().__init__(timeout=180)
+        self.db = db
+        self.page_size = page_size
+        self.current_page = 0
+        self.cached_data = None
+        self.total_count = 0
+
+    async def get_page_data(self) -> List[Dict]:
+        skip = self.current_page * self.page_size
+        data, self.total_count = self.db.get_leaderboard(skip, self.page_size)
+        self.max_pages = ceil(self.total_count / self.page_size)
+        return data
+
+    def update_buttons(self):
+        self.prev_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= self.max_pages - 1
+
+    async def get_embed(self) -> discord.Embed:
+        page_data = await self.get_page_data()
+
+        embed = discord.Embed(
+            title="Send Leaderboard",
+            description="Players with the most level sends",
+            color=0x00ff00
+        )
+
+        start_idx = self.current_page * self.page_size
+
+        for idx, entry in enumerate(page_data, start=start_idx + 1):
+            medal = ""
+            if idx == 1:
+                medal = "🥇"
+            elif idx == 2:
+                medal = "🥈"
+            elif idx == 3:
+                medal = "🥉"
+
+            embed.add_field(
+                name=f"{medal}#{idx}. {entry['name']} ({entry['accountID']})",
+                value=f"Total Sends: **{entry['sends']}**",
+                inline=False
+            )
+
+        embed.set_footer(text=f"Page {self.current_page + 1}/{self.max_pages} • Total Players: {self.total_count}")
+        return embed
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="⬅️")
+    async def prev_button(self, interaction: discord.Interaction, button: Button):
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="➡️")
+    async def next_button(self, interaction: discord.Interaction, button: Button):
+        self.current_page = min(self.max_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        try:
+            await self.message.edit(view=self)
+        except:
+            pass
 
 async def sendMessage(info: list[dict], timestamp: datetime):
     embeds = []
@@ -198,6 +268,13 @@ async def check_level(interaction: discord.Interaction, level_id: int):
         embed.set_author(name=levelData["creatorName"], url=f"https://gdbrowser.com/u/{levelData['accountID']}", icon_url="https://gdbrowser.com/assets/cp.png")
 
     await interaction.response.send_message(embed=embed)
+
+@client.tree.command(name="leaderboard", description="Show the send leaderboard.")
+async def leaderboard(interaction: discord.Interaction):
+    view = LeaderboardView(db)
+
+    await interaction.response.send_message(embed=await view.get_embed(), view=view)
+    view.message = await interaction.original_response()
 
 
 client.run(environ.get("BOT_TOKEN"))

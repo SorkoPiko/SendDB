@@ -86,3 +86,68 @@ class SendDB:
         ]
         results = info.aggregate(pipeline)
         return {result["_id"]: {"name": result["name"], "creator": result["creator"]} for result in results}
+
+    def get_leaderboard(self, skip: int = 0, limit: int = 10) -> tuple[list[dict], int]:
+        """
+        Get paginated leaderboard data sorted by number of sends using a single database query
+
+        Args:
+            skip (int): Number of documents to skip
+            limit (int): Number of documents to return
+
+        Returns:
+            tuple[list[dict], int]: List of leaderboard entries and total count
+        """
+        sends = self.get_collection("data", "sends")
+
+        pipeline = [
+            # First group by levelID to count sends per level
+            {"$group": {
+                "_id": "$levelID",
+                "count": {"$sum": 1}
+            }},
+            # Join with level info to get creator IDs
+            {"$lookup": {
+                "from": "info",
+                "localField": "_id",
+                "foreignField": "_id",
+                "as": "level_info"
+            }},
+            {"$unwind": "$level_info"},
+            # Group by creator to sum all their level sends
+            {"$group": {
+                "_id": "$level_info.creator",
+                "sends": {"$sum": "$count"}
+            }},
+            # Use $facet to run both the count and paginated data in parallel
+            {"$facet": {
+                "total": [
+                    {"$count": "count"}
+                ],
+                "data": [
+                    # Join with creators to get names and account IDs
+                    {"$lookup": {
+                        "from": "creators",
+                        "localField": "_id",
+                        "foreignField": "_id",
+                        "as": "creator_info"
+                    }},
+                    {"$unwind": "$creator_info"},
+                    {"$project": {
+                        "name": "$creator_info.name",
+                        "accountID": "$creator_info.accountID",
+                        "sends": 1
+                    }},
+                    {"$sort": {"sends": -1}},
+                    {"$skip": skip},
+                    {"$limit": limit}
+                ]
+            }}
+        ]
+
+        result = list(sends.aggregate(pipeline))
+
+        if not result or not result[0]["total"]:
+            return [], 0
+
+        return result[0]["data"], result[0]["total"][0]["count"]
