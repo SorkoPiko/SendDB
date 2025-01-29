@@ -237,7 +237,7 @@ class LeaderboardView(View):
                         {"$unwind": "$creator_info"},
                         {"$project": {
                             "name": "$creator_info.name",
-                            "accountID": "$creator_info.accountID",
+                            "accountID": "$creator_info._id",
                             "sends": 1
                         }},
                         {"$sort": {"sends": -1}},
@@ -272,7 +272,7 @@ class LeaderboardView(View):
                         {"$project": {
                             "name": "$level_info.name",
                             "creator": "$creator_info.name",
-                            "creatorID": "$creator_info.accountID",
+                            "creatorID": "$creator_info._id",
                             "levelID": "$_id",
                             "sends": 1
                         }},
