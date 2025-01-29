@@ -158,8 +158,8 @@ class PageModal(discord.ui.Modal, title="Go to Page"):
             self.page = None
 
 class TypeSelect(discord.ui.Select):
-    def __init__(self, view: "LeaderboardView"):
-        self.view = view
+    def __init__(self, parent_view: "LeaderboardView"):
+        self._view = parent_view  # Store the view reference directly
         options = [
             discord.SelectOption(label="Creator Leaderboard", value="CREATORS", description="Show sends by creator"),
             discord.SelectOption(label="Level Leaderboard", value="LEVELS", description="Show sends by level")
@@ -167,10 +167,10 @@ class TypeSelect(discord.ui.Select):
         super().__init__(placeholder="Select leaderboard type...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        self.view.type = LeaderboardType[self.values[0]]
-        self.view.current_page = 0
-        self.view.update_buttons()
-        await interaction.response.edit_message(embed=await self.view.get_embed(), view=self.view)
+        self._view.type = LeaderboardType[self.values[0]]
+        self._view.current_page = 0
+        self._view.update_buttons()
+        await interaction.response.edit_message(embed=await self._view.get_embed(), view=self._view)
 
 class SearchModal(discord.ui.Modal):
     def __init__(self, search_type: LeaderboardType):
