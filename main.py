@@ -158,12 +158,40 @@ class PageModal(discord.ui.Modal, title="Go to Page"):
             self.page = None
 
 class TypeSelect(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, view: "LeaderboardView"):
+        self.view = view
         options = [
             discord.SelectOption(label="Creator Leaderboard", value="CREATORS", description="Show sends by creator"),
             discord.SelectOption(label="Level Leaderboard", value="LEVELS", description="Show sends by level")
         ]
         super().__init__(placeholder="Select leaderboard type...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.type = LeaderboardType[self.values[0]]
+        self.view.current_page = 0
+        self.view.update_buttons()
+        await interaction.response.edit_message(embed=await self.view.get_embed(), view=self.view)
+
+class SearchModal(discord.ui.Modal):
+    def __init__(self, search_type: LeaderboardType):
+        super().__init__(
+            title=f"Search {'Creator' if search_type == LeaderboardType.CREATORS else 'Level'} ID"
+        )
+        self.search_id = discord.ui.TextInput(
+            label=f"{'Creator' if search_type == LeaderboardType.CREATORS else 'Level'} ID",
+            placeholder="Enter ID...",
+            min_length=1,
+            max_length=20
+        )
+        self.add_item(self.search_id)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            self.id = int(self.search_id.value)
+            await interaction.response.defer()
+        except ValueError:
+            await interaction.response.send_message("Please enter a valid number", ephemeral=True)
+            self.id = None
 
 class LeaderboardView(View):
     def __init__(self, db: SendDB, owner_id: int, page_size: int = 10):
@@ -176,7 +204,7 @@ class LeaderboardView(View):
         self.type = LeaderboardType.CREATORS
 
         # Add type selector
-        self.type_select = TypeSelect()
+        self.type_select = TypeSelect(self)
         self.add_item(self.type_select)
 
     def get_pipeline_for_type(self, skip: int, limit: int) -> list[dict]:
@@ -265,6 +293,72 @@ class LeaderboardView(View):
 
         return result[0]["data"], result[0]["total"][0]["count"]
 
+    async def find_page_for_id(self, search_id: int) -> int:
+        """Find the page number containing the given ID"""
+        if self.type == LeaderboardType.CREATORS:
+            pipeline = [
+                {"$group": {
+                    "_id": "$levelID",
+                    "count": {"$sum": 1}
+                }},
+                {"$lookup": {
+                    "from": "info",
+                    "localField": "_id",
+                    "foreignField": "_id",
+                    "as": "level_info"
+                }},
+                {"$unwind": "$level_info"},
+                {"$group": {
+                    "_id": "$level_info.creator",
+                    "sends": {"$sum": "$count"}
+                }},
+                {"$lookup": {
+                    "from": "creators",
+                    "localField": "_id",
+                    "foreignField": "_id",
+                    "as": "creator_info"
+                }},
+                {"$unwind": "$creator_info"},
+                {"$sort": {"sends": -1}},
+                {"$group": {
+                    "_id": None,
+                    "position": {
+                        "$push": "$_id"
+                    }
+                }},
+                {"$project": {
+                    "index": {
+                        "$indexOf": ["$position", search_id]
+                    }
+                }}
+            ]
+        else:
+            pipeline = [
+                {"$group": {
+                    "_id": "$levelID",
+                    "sends": {"$sum": 1}
+                }},
+                {"$sort": {"sends": -1}},
+                {"$group": {
+                    "_id": None,
+                    "position": {
+                        "$push": "$_id"
+                    }
+                }},
+                {"$project": {
+                    "index": {
+                        "$indexOf": ["$position", search_id]
+                    }
+                }}
+            ]
+
+        result = db.raw_pipeline("sends", pipeline)
+        if not result or result[0]["index"] == -1:
+            return None
+
+        position = result[0]["index"]
+        return position // self.page_size
+
     def update_buttons(self):
         self.prev_button.disabled = self.current_page == 0
         self.next_button.disabled = self.current_page >= self.max_pages - 1
@@ -326,6 +420,22 @@ class LeaderboardView(View):
         self.current_page = min(self.max_pages - 1, self.current_page + 1)
         self.update_buttons()
         await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+
+    @discord.ui.button(label="Search", style=discord.ButtonStyle.secondary, emoji="🔍")
+    async def search_button(self, interaction: discord.Interaction, button: Button):
+        modal = SearchModal(self.type)
+        await interaction.response.send_modal(modal)
+        await modal.wait()
+
+        if modal.id is not None:
+            page = await self.find_page_for_id(modal.id)
+            if page is not None:
+                self.current_page = page
+                self.update_buttons()
+                await interaction.edit_original_response(embed=await self.get_embed(), view=self)
+            else:
+                entity_type = "creator" if self.type == LeaderboardType.CREATORS else "level"
+                await interaction.followup.send(f"Could not find {entity_type} with ID {modal.id}", ephemeral=True)
 
     @discord.ui.button(label="Go to...", style=discord.ButtonStyle.secondary)
     async def goto_button(self, interaction: discord.Interaction, button: Button):
