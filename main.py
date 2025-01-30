@@ -546,7 +546,7 @@ async def check_level(interaction: discord.Interaction, level_id: int):
     embed = discord.Embed(
         title=f"{levelData['name']}",
         description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{int(lastSend.timestamp())}:F> (<t:{int(lastSend.timestamp())}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_id}) (`{level_id}`)",
-        color=0x00ff00 if level_id < OLDEST_LEVEL else 0xff0000
+        color=0x00ff00 if level_id >= OLDEST_LEVEL else 0xff0000
     )
     if creatorString:
         embed.set_author(name=levelData["creatorName"], url=f"https://gdbrowser.com/u/{levelData['accountID']}", icon_url="https://gdbrowser.com/assets/cp.png")
