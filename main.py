@@ -7,7 +7,6 @@ from discord.ext import commands
 from discord.ui import Button, View
 from discord import app_commands
 from datetime import datetime, UTC
-from typing import List, Dict
 from math import ceil
 from enum import Enum
 
@@ -16,6 +15,8 @@ from utils import SentChecker
 
 load_dotenv()
 db = SendDB(f"mongodb+srv://{environ.get('MONGO_USERNAME')}:{environ.get('MONGO_PASSWORD')}@{environ.get('MONGO_ENDPOINT')}")
+
+OLDEST_LEVEL = int(environ.get("OLDEST_LEVEL"))
 
 def load_previous_data():
     if os.path.exists("previous_data.json"):
@@ -516,7 +517,7 @@ async def subscribe(interaction: discord.Interaction):
 async def check_level(interaction: discord.Interaction, level_id: int):
     sendData = db.get_sends([level_id])
     if level_id not in sendData:
-        await interaction.response.send_message(f"❌ Level `{level_id}` has no sends.", ephemeral=True)
+        await interaction.response.send_message(f"{'⚠️ **WARNING**: This level was created before the bot started tracking levels. Any sends before the bot started operating have not been counted.\n\n' if level_id < OLDEST_LEVEL else ''}❌ Level `{level_id}` has no sends.", ephemeral=True)
         return
     sendCount = sendData[level_id]["count"]
     lastSend: datetime = sendData[level_id]["latest_timestamp"]
@@ -545,18 +546,34 @@ async def check_level(interaction: discord.Interaction, level_id: int):
     embed = discord.Embed(
         title=f"{levelData['name']}",
         description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{int(lastSend.timestamp())}:F> (<t:{int(lastSend.timestamp())}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_id}) (`{level_id}`)",
-        color=0x00ff00
+        color=0x00ff00 if level_id < OLDEST_LEVEL else 0xff0000
     )
     if creatorString:
         embed.set_author(name=levelData["creatorName"], url=f"https://gdbrowser.com/u/{levelData['accountID']}", icon_url="https://gdbrowser.com/assets/cp.png")
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(message='⚠️ **WARNING**: This level was created before the bot started tracking levels. The data may be inaccurate.' if level_id < OLDEST_LEVEL else '', embed=embed)
 
 @client.tree.command(name="leaderboard", description="Show the send leaderboard.")
 async def leaderboard(interaction: discord.Interaction):
     view = LeaderboardView(db, interaction.user.id)
     await interaction.response.send_message(embed=await view.get_embed(), view=view)
     view.message = await interaction.original_response()
+
+@client.tree.command(name="stats", description="Show the bot's stats.")
+async def stats(interaction: discord.Interaction):
+    total_sends = db.get_total_sends()
+    total_creators = db.get_total_creators()
+    total_levels = db.get_total_levels()
+    oldest_level = db.get_oldest_level()
+    oldest_creator = db.get_oldest_creator()
+
+    embed = discord.Embed(
+        title="Bot Stats",
+        description=f"Total Sends: `{total_sends}`\nTotal Creators: `{total_creators}`\nTotal Levels: `{total_levels}`\nOldest Level: **{oldest_level["name"]}** ([GDBrowser](https://gdbrowser.com/{oldest_level["_id"]}))\nOldest Creator: **{oldest_creator["name"]}** ([GDBrowser](https://gdbrowser.com/u/{oldest_creator['accountID']}))",
+        color=0x00ff00
+    )
+
+    await interaction.response.send_message(embed=embed)
 
 
 client.run(environ.get("BOT_TOKEN"))

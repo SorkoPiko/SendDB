@@ -91,3 +91,23 @@ class SendDB:
         collection = self.get_collection("data", collection)
 
         return list(collection.aggregate(pipeline))
+
+    def get_total_sends(self):
+        sends = self.get_collection("data", "sends")
+        return sends.count_documents({})
+
+    def get_total_creators(self):
+        creators = self.get_collection("data", "creators")
+        return creators.count_documents({})
+
+    def get_total_levels(self):
+        info = self.get_collection("data", "info")
+        return info.count_documents({})
+
+    def get_oldest_level(self):
+        info = self.get_collection("data", "info")
+        return info.find_one(sort=[("_id", 1)])
+
+    def get_oldest_creator(self):
+        creators = self.get_collection("data", "creators")
+        return creators.find_one(sort=[("_id", 1)])
