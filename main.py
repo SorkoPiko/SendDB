@@ -169,6 +169,7 @@ class TypeSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         self._view.type = LeaderboardType[self.values[0]]
         self._view.current_page = 0
+        self._view.searched_id = None
         self._view.update_buttons()
         await interaction.response.edit_message(embed=await self._view.get_embed(), view=self._view)
 
