@@ -111,3 +111,7 @@ class SendDB:
     def get_oldest_creator(self):
         creators = self.get_collection("data", "creators")
         return creators.find_one(sort=[("_id", 1)])
+
+    def get_latest_send(self):
+        sends = self.get_collection("data", "sends")
+        return sends.find_one(sort=[("timestamp", -1)])

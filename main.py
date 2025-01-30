@@ -566,10 +566,11 @@ async def stats(interaction: discord.Interaction):
     total_levels = db.get_total_levels()
     oldest_level = db.get_oldest_level()
     oldest_creator = db.get_oldest_creator()
+    latest_send = db.get_latest_send()
 
     embed = discord.Embed(
         title="Bot Stats",
-        description=f"Total Sends: `{total_sends}`\nTotal Creators: `{total_creators}`\nTotal Levels: `{total_levels}`\nOldest Level: **{oldest_level["name"]}** ([GDBrowser](https://gdbrowser.com/{oldest_level["_id"]}))\nOldest Creator: **{oldest_creator["name"]}** ([GDBrowser](https://gdbrowser.com/u/{oldest_creator['accountID']}))",
+        description=f"Total Sends: `{total_sends}`\nTotal Creators: `{total_creators}`\nTotal Levels: `{total_levels}`\nOldest Level: **{oldest_level["name"]}** ([GDBrowser](https://gdbrowser.com/{oldest_level["_id"]}))\nOldest Creator: **{oldest_creator["name"]}** ([GDBrowser](https://gdbrowser.com/u/{oldest_creator['accountID']}))\nLatest Send: <t:{int(latest_send['timestamp'].timestamp())}:F> (<t:{int(latest_send['timestamp'].timestamp())}:R>)",
         color=0x00ff00
     )
 
