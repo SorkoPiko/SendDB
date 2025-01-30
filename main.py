@@ -178,7 +178,7 @@ class SearchModal(discord.ui.Modal):
             title=f"Search {'Creator' if search_type == LeaderboardType.CREATORS else 'Level'} ID"
         )
         self.search_id = discord.ui.TextInput(
-            label=f"{'Creator' if search_type == LeaderboardType.CREATORS else 'Level'} ID",
+            label=f"{'User' if search_type == LeaderboardType.CREATORS else 'Level'} ID {'(NOT Player ID)' if search_type == LeaderboardType.CREATORS else ''}",
             placeholder="Enter ID...",
             min_length=1,
             max_length=20
@@ -202,6 +202,7 @@ class LeaderboardView(View):
         self.current_page = 0
         self.total_count = 0
         self.type = LeaderboardType.CREATORS
+        self.searched_id = None
 
         # Add type selector
         self.type_select = TypeSelect(self)
@@ -388,13 +389,14 @@ class LeaderboardView(View):
         start_idx = self.current_page * self.page_size
 
         for idx, entry in enumerate(page_data, start=start_idx + 1):
-            medal = ""
+            medal = "⭐" if self.searched_id and self.searched_id == entry["accountID" if self.type == LeaderboardType.CREATORS else "levelID"] else ""
+
             if idx == 1:
-                medal = "🥇"
+                medal += "🥇"
             elif idx == 2:
-                medal = "🥈"
+                medal += "🥈"
             elif idx == 3:
-                medal = "🥉"
+                medal += "🥉"
 
             if self.type == LeaderboardType.CREATORS:
                 embed.add_field(
@@ -443,6 +445,7 @@ class LeaderboardView(View):
             page = await self.find_page_for_id(modal.id)
             if page is not None:
                 self.current_page = page
+                self.searched_id = modal.id
                 self.update_buttons()
                 await interaction.edit_original_response(embed=await self.get_embed(), view=self)
             else:
