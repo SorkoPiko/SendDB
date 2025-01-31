@@ -41,6 +41,7 @@ class SentChecker:
                         break
 
                     levels, creators = self.getSentLevels()
+                    time.sleep(2)
                     rated_levels = self.getRatedLevels()
                     if self.running.is_set() and self.loop and not self.loop.is_closed():
                         self.loop.call_soon_threadsafe(
@@ -69,14 +70,16 @@ class SentChecker:
 
         req = requests.post('http://www.boomlings.com/database/getGJLevels21.php', data=data, headers=headers)
 
-        print(req.text)
-
-        if req.text == "1005":
+        if req.text == "error code: 1015": # ratelimited
             print("Ratelimited!")
             raise Ratelimited()
 
-        if req.text == "1006":
-            print("Banned!")
+        if req.text == "error code: 1005": # asn ban
+            print("ASN Banned!")
+            raise Banned()
+
+        if req.text == "error code: 1006": # ip ban
+            print("IP Banned!")
             raise Banned()
 
         if req.text == "-1": return [], []
