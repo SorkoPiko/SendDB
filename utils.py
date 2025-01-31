@@ -69,6 +69,8 @@ class SentChecker:
 
         req = requests.post('http://www.boomlings.com/database/getGJLevels21.php', data=data, headers=headers)
 
+        print(req.text)
+
         if req.text == "1005":
             print("Ratelimited!")
             raise Ratelimited()
