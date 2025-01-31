@@ -41,21 +41,20 @@ class SentChecker:
                         break
 
                     levels, creators = self.getSentLevels()
-                    time.sleep(2)
                     rated_levels = self.getRatedLevels()
                     if self.running.is_set() and self.loop and not self.loop.is_closed():
                         self.loop.call_soon_threadsafe(
                             lambda: asyncio.create_task(self.callback(levels, creators, rated_levels))
                         )
+                    time.sleep(4)
+
             except Ratelimited:
-                print("Ratelimited!")
                 time.sleep(60*60)
             except Banned:
-                print("Banned!")
                 break
             except Exception as e:
                 print(f"Error in worker thread: {e}")
-            time.sleep(2)
+                time.sleep(4)
 
     @staticmethod
     def getSentLevels() -> tuple[list[dict], list[dict]]:
