@@ -4,6 +4,12 @@ import time
 import asyncio
 from typing import Optional, Callable
 
+class Ratelimited(Exception):
+    pass
+
+class Banned(Exception):
+    pass
+
 class SentChecker:
     def __init__(self, callback: Callable):
         self.callback = callback
@@ -40,9 +46,15 @@ class SentChecker:
                         self.loop.call_soon_threadsafe(
                             lambda: asyncio.create_task(self.callback(levels, creators, rated_levels))
                         )
-                    time.sleep(2)
+            except Ratelimited:
+                print("Ratelimited!")
+                time.sleep(60*60)
+            except Banned:
+                print("Banned!")
+                break
             except Exception as e:
                 print(f"Error in worker thread: {e}")
+            time.sleep(2)
 
     @staticmethod
     def getSentLevels() -> tuple[list[dict], list[dict]]:
@@ -56,6 +68,14 @@ class SentChecker:
         }
 
         req = requests.post('http://www.boomlings.com/database/getGJLevels21.php', data=data, headers=headers)
+
+        if req.text == "1005":
+            print("Ratelimited!")
+            raise Ratelimited()
+
+        if req.text == "1006":
+            print("Banned!")
+            raise Banned()
 
         if req.text == "-1": return [], []
 

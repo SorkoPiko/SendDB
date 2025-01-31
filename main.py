@@ -226,7 +226,8 @@ class LeaderboardView(View):
                 {"$unwind": "$level_info"},
                 {"$group": {
                     "_id": "$level_info.creator",
-                    "sends": {"$sum": "$count"}
+                    "sends": {"$sum": "$count"},
+                    "level_count": {"$addToSet": "$_id"}
                 }},
                 {"$facet": {
                     "total": [{"$count": "count"}],
@@ -241,7 +242,8 @@ class LeaderboardView(View):
                         {"$project": {
                             "name": "$creator_info.name",
                             "accountID": "$creator_info._id",
-                            "sends": 1
+                            "sends": 1,
+                            "level_count": {"$size": "$level_count"}
                         }},
                         {"$sort": {
                             "sends": -1,
@@ -252,7 +254,7 @@ class LeaderboardView(View):
                     ]
                 }}
             ]
-        else:  # LeaderboardType.LEVELS
+        else:
             return [
                 {"$group": {
                     "_id": "$levelID",
@@ -403,7 +405,7 @@ class LeaderboardView(View):
             if self.type == LeaderboardType.CREATORS:
                 embed.add_field(
                     name=f"{medal}#{idx}. {entry['name']} ({entry['accountID']})",
-                    value=f"Total Sends: **{entry['sends']}**",
+                    value=f"Total Sends: **{entry['sends']}** over `{entry['level_count']}` level{'s' if entry['level_count'] != 1 else ''}",
                     inline=False
                 )
             else:
