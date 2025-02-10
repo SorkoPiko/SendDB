@@ -115,6 +115,7 @@ class SendBot(commands.Bot):
     async def on_ready(self):
         await self.wait_until_ready()
         if not self.synced:
+            await self.add_cog(FollowCommands(client))
             await self.tree.sync()
             self.synced = True
         await self.change_presence(activity=discord.Activity(name='Sent Levels', type=discord.ActivityType.watching), status=discord.Status.online)
