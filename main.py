@@ -522,6 +522,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
             if not creator.isdigit():
                 # Try to find creator by name
                 async def callback(player_id: int, account_id: int):
+                    db.add_creators([{"_id": player_id, "name": creator, "accountID": account_id}])
                     db.add_follow(interaction.user.id, "creator", player_id)
                     await interaction.followup.send(f"✅ Now following **{creator}** with ID: `{player_id}`", ephemeral=True)
 
