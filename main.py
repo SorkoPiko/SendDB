@@ -500,7 +500,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
         if creator_string.isdigit():
             return int(creator_string)
 
-        raise ValueError(f"Could not extract Discord ID from '{creator_string}'")
+        return ''
 
     async def creator_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         if not current or '(' in current:
