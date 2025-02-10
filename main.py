@@ -575,7 +575,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
     @app_commands.command(name="unfollow", description="Unfollow a creator or level")
     async def unfollow(self, interaction: discord.Interaction, type: Literal["creator", "level"], id: int):
         db.remove_follow(interaction.user.id, type, id)
-        await interaction.response.send_message(f"✅ Unfollowed {type} {id}", ephemeral=True)
+        await interaction.response.send_message(f"✅ Unfollowed {type} `{id}`", ephemeral=True)
 
 async def notify_followers(level_info: dict):
     level_followers = db.get_followers("level", level_info["_id"])
