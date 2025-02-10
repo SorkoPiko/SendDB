@@ -3,19 +3,16 @@ from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from pymongo.collection import Collection
 from pymongo.database import Database
-from datetime import datetime
+from datetime import datetime, UTC
 
 class SendDB:
     def __init__(self, connection_string: str):
         self.client = MongoClient(connection_string, server_api=ServerApi('1'))
-        # self.create_indexes()
+        self.create_indexes()
 
-    # def create_indexes(self):
-    #     sends = self.get_collection("data", "sends")
-    #     sends.create_index([("ip", ASCENDING), ("levelID", ASCENDING)], unique=True)
-    #
-    #     demon = self.get_collection("data", "demon")
-    #     demon.create_index([("ip", ASCENDING), ("levelID", ASCENDING)], unique=True)
+    def create_indexes(self):
+        follows = self.get_collection("data", "follows")
+        follows.create_index([("user_id", 1), ("type", 1), ("followed_id", 1)], unique=True)
 
     def get_database(self, db_name: str) -> Database:
         return self.client[db_name]
@@ -115,3 +112,31 @@ class SendDB:
     def get_latest_send(self):
         sends = self.get_collection("data", "sends")
         return sends.find_one(sort=[("timestamp", -1)])
+
+    def add_follow(self, user_id: int, followed_type: str, followed_id: int):
+        follows = self.get_collection("data", "follows")
+        follows.update_one(
+            {"user_id": user_id, "type": followed_type, "followed_id": followed_id},
+            {"$set": {"timestamp": datetime.now(UTC)}},
+            upsert=True
+        )
+
+    def remove_follow(self, user_id: int, followed_type: str, followed_id: int):
+        follows = self.get_collection("data", "follows")
+        follows.delete_one({"user_id": user_id, "type": followed_type, "followed_id": followed_id})
+
+    def get_follows(self, user_id: int) -> list[dict]:
+        follows = self.get_collection("data", "follows")
+        return list(follows.find({"user_id": user_id}))
+
+    def get_followers(self, followed_type: str, followed_id: int) -> list[int]:
+        follows = self.get_collection("data", "follows")
+        results = follows.find({"type": followed_type, "followed_id": followed_id})
+        return [result["user_id"] for result in results]
+
+    def search_creators(self, query: str) -> list[dict]:
+        creators = self.get_collection("data", "creators")
+        return list(creators.find(
+            {"name": {"$regex": f"^{query}", "$options": "i"}},
+            {"_id": 1, "name": 1, "accountID": 1}
+        ).limit(25))

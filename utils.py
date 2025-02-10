@@ -1,7 +1,4 @@
-import requests
-import threading
-import time
-import asyncio
+import requests, threading, time, asyncio, queue
 from typing import Optional, Callable
 
 class Ratelimited(Exception):
@@ -12,6 +9,7 @@ class Banned(Exception):
 
 class SentChecker:
     def __init__(self, callback: Callable):
+        self.q: queue.Queue = queue.Queue()
         self.callback = callback
         self.lock = threading.Lock()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -30,18 +28,31 @@ class SentChecker:
         """Stop the worker thread"""
         if self.running.is_set():
             self.running.clear()
+            self.q.put((None, None))
             if self.thread:
                 self.thread.join(timeout=5)
 
     def worker(self):
         while self.running.is_set():
             try:
+                username, callback, *args = self.q.get(timeout=1)
                 with self.lock:
                     if not self.running.is_set():
                         break
 
                     levels, creators = self.getSentLevels()
-                    time.sleep(5)
+
+                    time.sleep(2)
+
+                    if username:
+                        player_id, account_id = self.check_account(username)
+                        if self.running.is_set() and self.loop and not self.loop.is_closed():
+                            self.loop.call_soon_threadsafe(
+                                lambda: asyncio.create_task(callback(player_id, account_id, *args))
+                            )
+
+                    time.sleep(3)
+
                     rated_levels = self.getRatedLevels()
                     if self.running.is_set() and self.loop and not self.loop.is_closed():
                         self.loop.call_soon_threadsafe(
@@ -49,6 +60,9 @@ class SentChecker:
                         )
                     time.sleep(5)
 
+                self.q.task_done()
+            except queue.Empty:
+                continue
             except Ratelimited:
                 time.sleep(60*60)
             except Banned:
@@ -136,3 +150,27 @@ class SentChecker:
             rated_level_ids.append(int(data["1"]))
 
         return rated_level_ids
+
+    @staticmethod
+    def check_account(username) -> [int, int]:
+        data = {
+            "str": username,
+            "secret": "Wmfd2893gb7"
+        }
+
+        headers = {
+            "User-Agent": ""
+        }
+
+        req = requests.post('http://www.boomlings.com/database/getGJUsers20.php', data=data, headers=headers)
+
+        if req.text == "-1": return 0
+
+        split = req.text.split(":")
+        pairs = {int(split[i]): split[i+1] for i in range(0, len(split), 2)}
+
+        return int(pairs[2]), int(pairs[16])
+
+    def queue_check(self, username, callback, *args):
+        if self.running.is_set():
+            self.q.put((username, callback, *args))

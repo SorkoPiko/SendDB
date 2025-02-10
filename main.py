@@ -2,13 +2,14 @@ import asyncio
 
 from dotenv import load_dotenv
 from os import environ
-import discord, os, json
+import discord, os, json, re
 from discord.ext import commands
 from discord.ui import Button, View
 from discord import app_commands
 from datetime import datetime, UTC
 from math import ceil
 from enum import Enum
+from typing import Literal
 
 from db import SendDB
 from utils import SentChecker
@@ -99,6 +100,7 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
             for level in webhookInfo:
                 if level["_id"] == sendID:
                     level["sends"] = sendCount["count"]
+                    await notify_followers(level)
 
         await sendMessage(webhookInfo, timestamp)
 
@@ -480,6 +482,117 @@ class LeaderboardView(View):
         self.current_page = 0
         self.update_buttons()
         await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+
+class FollowCommands(commands.GroupCog, name="follow"):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        super().__init__()
+
+    @staticmethod
+    def extract_id(creator_string):
+        if match := re.search(r'\((\d+)\)', creator_string):
+            return int(match.group(1))
+
+        if match := re.search(r'(\d+)$', creator_string):
+            return int(match.group(1))
+
+        if creator_string.isdigit():
+            return int(creator_string)
+
+        raise ValueError(f"Could not extract Discord ID from '{creator_string}'")
+
+    async def creator_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        if not current or '(' in current:
+            return []
+        creators = db.search_creators(current)
+        return [
+                   app_commands.Choice(name=f"{creator['name']} ({creator['_id']})", value=str(creator['_id']))
+                   for creator in creators
+               ][:25]
+
+    @app_commands.command(name="creator", description="Follow a creator to get DM notifications when their levels are sent")
+    @app_commands.autocomplete(creator=creator_autocomplete)
+    async def follow_creator(self, interaction: discord.Interaction, creator: str):
+        creator_id = self.extract_id(creator)
+
+        # Verify creator exists
+        creators = db.get_creators([creator_id])
+        if creator_id not in creators:
+            if not creator.isdigit():
+                # Try to find creator by name
+                async def callback(player_id: int, account_id: int):
+                    db.add_follow(interaction.user.id, "creator", player_id)
+                    await interaction.followup.send(f"✅ Now following **{creator}** with ID: `{player_id}`", ephemeral=True)
+
+                await interaction.response.defer(ephemeral=True)
+                checker.queue_check(creator, callback)
+                return
+
+            await interaction.response.send_message(f"❌ Creator `{creator}` not found", ephemeral=True)
+            return
+
+        db.add_follow(interaction.user.id, "creator", creator_id)
+        await interaction.response.send_message(f"✅ Now following **{creators[creator_id]['name']}**", ephemeral=True)
+
+    @app_commands.command(name="level", description="Follow a level to get DM notifications when it is sent")
+    async def follow_level(self, interaction: discord.Interaction, level_id: int):
+        info = db.get_info([level_id])
+        if level_id in info:
+            level_name = f"**{info[level_id]['name']}**"
+        else:
+            level_name = f"`{level_id}`"
+
+        db.add_follow(interaction.user.id, "level", level_id)
+        await interaction.response.send_message(f"✅ Now following level {level_name}", ephemeral=True)
+
+    @app_commands.command(name="list", description="List all your followed creators and levels")
+    async def list_follows(self, interaction: discord.Interaction):
+        follows = db.get_follows(interaction.user.id)
+        if not follows:
+            await interaction.response.send_message("You're not following any creators or levels", ephemeral=True)
+            return
+
+        creator_ids = [f["followed_id"] for f in follows if f["type"] == "creator"]
+        level_ids = [f["followed_id"] for f in follows if f["type"] == "level"]
+
+        creators = db.get_creators(creator_ids)
+        levels = db.get_info(level_ids)
+
+        embed = discord.Embed(title="Your Follows", color=0x00ff00)
+
+        if creator_ids:
+            creator_list = "\n".join(f"• {creators[cid]['name']} ({cid})" for cid in creator_ids if cid in creators)
+            embed.add_field(name="Creators", value=creator_list or "None", inline=False)
+
+        if level_ids:
+            level_list = "\n".join(f"• {levels[lid]['name']} ({lid})" for lid in level_ids if lid in levels)
+            embed.add_field(name="Levels", value=level_list or "None", inline=False)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="unfollow", description="Unfollow a creator or level")
+    async def unfollow(self, interaction: discord.Interaction, type: Literal["creator", "level"], id: int):
+        db.remove_follow(interaction.user.id, type, id)
+        await interaction.response.send_message(f"✅ Unfollowed {type} {id}", ephemeral=True)
+
+async def notify_followers(level_info: dict):
+    level_followers = db.get_followers("level", level_info["_id"])
+    creator_followers = db.get_followers("creator", level_info["creator"])
+
+    followers = set(level_followers + creator_followers)
+
+    embed = discord.Embed(
+        title=f"{level_info['name']} was just sent!",
+        description=f"By **{level_info['creator']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})",
+        color=0x00ff00
+    )
+
+    for follower_id in followers:
+        try:
+            user = await client.fetch_user(follower_id)
+            await user.send(embed=embed)
+        except (discord.NotFound, discord.Forbidden):
+            continue
 
 async def sendMessage(info: list[dict], timestamp: datetime):
     embeds = []
