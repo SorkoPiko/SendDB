@@ -589,6 +589,9 @@ async def notify_followers(level_info: dict):
         color=0x00ff00
     )
 
+    embed.set_author(name=level["creator"], url=f"https://gdbrowser.com/u/{level['creatorID']}", icon_url="https://gdbrowser.com/assets/cp.png")
+    embed.timestamp = timestamp
+    
     for follower_id in followers:
         try:
             user = await client.fetch_user(follower_id)
