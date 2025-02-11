@@ -159,7 +159,7 @@ class SentChecker:
         return rated_level_ids
 
     @staticmethod
-    def check_account(username) -> [int, int]:
+    def check_account(username) -> [str, int, int]:
         data = {
             "str": username,
             "secret": "Wmfd2893gb7"
@@ -176,7 +176,7 @@ class SentChecker:
         split = req.text.split(":")
         pairs = {int(split[i]): split[i+1] for i in range(0, len(split), 2)}
 
-        return int(pairs[2]), int(pairs[16])
+        return pairs[1], int(pairs[2]), int(pairs[16])
 
     def queue_check(self, username, callback, *args):
         if self.running.is_set():
