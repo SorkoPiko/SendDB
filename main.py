@@ -2,7 +2,7 @@ import asyncio
 
 from dotenv import load_dotenv
 from os import environ
-import discord, os, json, re
+import discord, os, json, re, git
 from discord.ext import commands
 from discord.ui import Button, View
 from discord import app_commands
@@ -18,6 +18,15 @@ load_dotenv()
 db = SendDB(f"mongodb+srv://{environ.get('MONGO_USERNAME')}:{environ.get('MONGO_PASSWORD')}@{environ.get('MONGO_ENDPOINT')}")
 
 OLDEST_LEVEL = int(environ.get("OLDEST_LEVEL"))
+
+def get_git_info():
+    repo = git.Repo(search_parent_directories=True)
+    commit_hash = repo.head.commit.hexsha
+    upstream_url = next(repo.remote('origin').urls)
+    return commit_hash, upstream_url
+
+commit_hash, upstream_url = get_git_info()
+invite = environ.get("INVITE")
 
 def load_previous_data():
     if os.path.exists("previous_data.json"):
@@ -594,7 +603,7 @@ async def notify_followers(level_info: dict, timestamp: datetime):
 
     embed.set_author(name=level_info["creator"], url=f"https://gdbrowser.com/u/{level_info['creatorID']}", icon_url="https://gdbrowser.com/assets/cp.png")
     embed.timestamp = timestamp
-    
+
     for follower_id in followers:
         try:
             user = await client.fetch_user(follower_id)
@@ -682,8 +691,8 @@ async def leaderboard(interaction: discord.Interaction):
     await interaction.response.send_message(embed=await view.get_embed(), view=view)
     view.message = await interaction.original_response()
 
-@client.tree.command(name="stats", description="Show the bot's stats.")
-async def stats(interaction: discord.Interaction):
+@client.tree.command(name="info", description="Show the bot's info and stats.")
+async def info(interaction: discord.Interaction):
     total_sends = db.get_total_sends()
     total_creators = db.get_total_creators()
     total_levels = db.get_total_levels()
@@ -693,7 +702,18 @@ async def stats(interaction: discord.Interaction):
 
     embed = discord.Embed(
         title="Bot Stats",
-        description=f"Total Sends: `{total_sends}`\nTotal Creators: `{total_creators}`\nTotal Levels: `{total_levels}`\nOldest Level: **{oldest_level["name"]}** ([GDBrowser](https://gdbrowser.com/{oldest_level["_id"]}))\nOldest Creator: **{oldest_creator["name"]}** ([GDBrowser](https://gdbrowser.com/u/{oldest_creator['accountID']}))\nLatest Send: <t:{int(latest_send['timestamp'].timestamp())}:F> (<t:{int(latest_send['timestamp'].timestamp())}:R>)",
+        description=f"""
+Total Sends: `{total_sends}`
+Total Creators: `{total_creators}`
+Total Levels: `{total_levels}`
+Oldest Level: **{oldest_level["name"]}** ([GDBrowser](https://gdbrowser.com/{oldest_level["_id"]}))
+Oldest Creator: **{oldest_creator["name"]}** ([GDBrowser](https://gdbrowser.com/u/{oldest_creator['accountID']}))
+Latest Send: <t:{int(latest_send['timestamp'].timestamp())}:F> (<t:{int(latest_send['timestamp'].timestamp())}:R>)
+
+Version: `{commit_hash[:7]}` ([View on GitHub]({upstream_url}/commit/{commit_hash}))
+Support Server: [discord.gg/{invite}](https://discord.gg/{invite})
+
+        """,
         color=0x00ff00
     )
 
