@@ -711,8 +711,7 @@ Oldest Creator: **{oldest_creator["name"]}** ([GDBrowser](https://gdbrowser.com/
 Latest Send: <t:{int(latest_send['timestamp'].timestamp())}:F> (<t:{int(latest_send['timestamp'].timestamp())}:R>)
 
 Version: `{commit_hash[:7]}` ([View on GitHub]({upstream_url}/tree/{commit_hash}))
-Support Server: [discord.gg/{invite}](https://discord.gg/{invite})
-
+Support Server: [SendDB](https://discord.gg/{invite})
         """,
         color=0x00ff00
     )
