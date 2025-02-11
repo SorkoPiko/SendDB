@@ -585,7 +585,7 @@ async def notify_followers(level_info: dict):
 
     embed = discord.Embed(
         title=f"{level_info['name']} was just sent!",
-        description=f"By **{level_info['creator']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})",
+        description=f"By **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})",
         color=0x00ff00
     )
 
