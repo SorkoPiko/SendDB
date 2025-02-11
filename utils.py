@@ -8,9 +8,10 @@ class Banned(Exception):
     pass
 
 class SentChecker:
-    def __init__(self, callback: Callable):
+    def __init__(self, callback: Callable, ban_callback: Optional[Callable] = None):
         self.q: queue.Queue = queue.Queue()
         self.callback = callback
+        self.ban_callback = ban_callback
         self.lock = threading.Lock()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
@@ -36,6 +37,10 @@ class SentChecker:
         while self.running.is_set():
             try:
                 username, callback, *args = self.q.get(timeout=1)
+            except queue.Empty:
+                username, callback, *args = None, None, []
+
+            try:
                 with self.lock:
                     if not self.running.is_set():
                         break
@@ -61,11 +66,11 @@ class SentChecker:
                     time.sleep(5)
 
                 self.q.task_done()
-            except queue.Empty:
-                continue
             except Ratelimited:
                 time.sleep(60*60)
             except Banned:
+                if self.ban_callback:
+                    self.ban_callback()
                 break
             except Exception as e:
                 print(f"Error in worker thread: {e}")

@@ -100,11 +100,14 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
             for level in webhookInfo:
                 if level["_id"] == sendID:
                     level["sends"] = sendCount["count"]
-                    await notify_followers(level)
+                    await notify_followers(level, timestamp)
 
         await sendMessage(webhookInfo, timestamp)
 
-checker = SentChecker(onSendResults)
+async def sendBanNotification():
+    await client.sendChannel.send("❌ **Bot was IP Banned!**")
+
+checker = SentChecker(onSendResults, sendBanNotification)
 
 class SendBot(commands.Bot):
     def __init__(self):
@@ -577,7 +580,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
         db.remove_follow(interaction.user.id, type, id)
         await interaction.response.send_message(f"✅ Unfollowed {type} `{id}`", ephemeral=True)
 
-async def notify_followers(level_info: dict):
+async def notify_followers(level_info: dict, timestamp: datetime):
     level_followers = db.get_followers("level", level_info["_id"])
     creator_followers = db.get_followers("creator", level_info["creator"])
 
@@ -589,7 +592,7 @@ async def notify_followers(level_info: dict):
         color=0x00ff00
     )
 
-    embed.set_author(name=level["creator"], url=f"https://gdbrowser.com/u/{level['creatorID']}", icon_url="https://gdbrowser.com/assets/cp.png")
+    embed.set_author(name=level_info["creator"], url=f"https://gdbrowser.com/u/{level_info['creatorID']}", icon_url="https://gdbrowser.com/assets/cp.png")
     embed.timestamp = timestamp
     
     for follower_id in followers:
