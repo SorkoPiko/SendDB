@@ -65,7 +65,9 @@ class SentChecker:
                         )
                     time.sleep(5)
 
-                self.q.task_done()
+                if username:
+                    self.q.task_done()
+
             except Ratelimited:
                 time.sleep(60*60)
             except Banned:
