@@ -710,7 +710,7 @@ Oldest Level: **{oldest_level["name"]}** ([GDBrowser](https://gdbrowser.com/{old
 Oldest Creator: **{oldest_creator["name"]}** ([GDBrowser](https://gdbrowser.com/u/{oldest_creator['accountID']}))
 Latest Send: <t:{int(latest_send['timestamp'].timestamp())}:F> (<t:{int(latest_send['timestamp'].timestamp())}:R>)
 
-Version: `{commit_hash[:7]}` ([View on GitHub]({upstream_url}/commit/{commit_hash}))
+Version: `{commit_hash[:7]}` ([View on GitHub]({upstream_url}/tree/{commit_hash}))
 Support Server: [discord.gg/{invite}](https://discord.gg/{invite})
 
         """,
