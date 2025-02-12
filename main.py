@@ -154,8 +154,8 @@ class SendBot(commands.Bot):
         await super().close()
 
     async def get_command_id(self, command_name: str):
-        commands = await self.tree.fetch_commands()
-        for command in commands:
+        bot_commands = await self.tree.fetch_commands()
+        for command in bot_commands:
             if command.name == command_name:
                 return command.id
         return None
