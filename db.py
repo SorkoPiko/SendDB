@@ -169,7 +169,18 @@ class SendDB:
                     "_id": "$levelID",
                     "score": {
                         "$sum": {
-                            "$divide": [1, {"$add": ["$age_hours", 1]}]
+                            "$multiply": [
+                                45000,
+                                {
+                                    "$divide": [
+                                        1,
+                                        {"$pow": [
+                                            {"$add": [{"$divide": ["$age_hours", 24]}, 2]},
+                                            1.5
+                                        ]}
+                                    ]
+                                }
+                            ]
                         }
                     },
                     "recent_sends": {"$sum": 1},
