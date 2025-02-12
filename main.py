@@ -32,17 +32,19 @@ def load_previous_data():
     if os.path.exists("previous_data.json"):
         with open("previous_data.json", "r") as file:
             data = json.load(file)
-            return data.get("previous_levels", [])
+            return data
     return []
 
 def save_previous_data(levels):
     data = {
-        "previous_levels": levels
+        "previous_levels": levels,
+        "trending_message": client.trendingMessageID
     }
     with open("previous_data.json", "w") as file:
         json.dump(data, file)
 
-previous_levels = load_previous_data()
+previous_data = load_previous_data()
+previous_levels = previous_data.get("previous_levels", [])
 
 async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[int]):
     if not levels or not creators or not rated_levels:
@@ -122,6 +124,9 @@ class SendBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='=', intents=discord.Intents.none())
         self.sendChannel: discord.TextChannel = None
+        self.trendingChannel: discord.TextChannel = None
+        self.trendingMessageID = previous_data.get("trending_message", None)
+        self.trendingMessage: discord.Message = None
         self.synced = False
 
     async def on_ready(self):
@@ -135,12 +140,58 @@ class SendBot(commands.Bot):
         if self.sendChannel is None or not self.sendChannel.is_news():
             print("Send channel not found or not news.")
 
+        self.trendingChannel = (self.get_channel(int(environ.get('TRENDING_CHANNEL_ID'))) or await self.fetch_channel(int(environ.get('TRENDING_CHANNEL_ID'))))
+        if self.trendingChannel:
+            await self.loop.create_task(self.update_trending_message())
+
         checker.start(asyncio.get_running_loop())
         print(f"We have logged in as {self.user}.")
 
     async def close(self):
         checker.stop()
         await super().close()
+
+    async def update_trending_message(self):
+        while not self.is_closed():
+            try:
+                trending_levels, _ = db.get_trending_levels()
+                embed = discord.Embed(
+                    title="🔥 Trending Levels",
+                    description="Most popular levels in the last 30 days",
+                    color=0xff6600
+                )
+
+                for idx, level in enumerate(trending_levels, 1):
+                    if idx == 1:
+                        medal = "🥇"
+                    elif idx == 2:
+                        medal = "🥈"
+                    elif idx == 3:
+                        medal = "🥉"
+
+                    embed.add_field(
+                        name=f"{medal}#{idx}. {level['name']} ({level['levelID']})",
+                        value=f"By **{level['creator']}** ({level['creatorID']})\n"
+                              f"Recent Sends: **{level['recent_sends']}**\n"
+                              f"Last Send: <t:{int(level['last_send'].timestamp())}:R> (<t:{int(level['last_send'].timestamp())}:F>)",
+                        inline=False
+                    )
+
+                embed.timestamp = datetime.now(UTC)
+
+                if self.trendingMessage:
+                    await self.trendingMessage.edit(embed=embed)
+                if self.trendingMessageID:
+                    self.trendingMessage = await self.trendingChannel.fetch_message(self.trendingMessageID)
+                    await self.trendingMessage.edit(embed=embed)
+                else:
+                    self.trendingMessage = await self.trendingChannel.send(embed=embed)
+                    self.trendingMessageID = self.trendingMessage.id
+
+            except Exception as e:
+                print(f"Error updating trending message: {e}")
+
+            await asyncio.sleep(60)
 
 client = SendBot()
 
@@ -496,6 +547,98 @@ class LeaderboardView(View):
         self.update_buttons()
         await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
+class TrendingView(View):
+    def __init__(self, db: SendDB, owner_id: int, page_size: int = 10):
+        super().__init__(timeout=180)
+        self.db = db
+        self.owner_id = owner_id
+        self.page_size = page_size
+        self.current_page = 0
+        self.total_count = 0
+        self.max_pages = 1
+
+    async def get_page_data(self) -> tuple[list[dict], int]:
+        skip = self.current_page * self.page_size
+        return self.db.get_trending_levels(skip, self.page_size, True)
+
+    def update_buttons(self):
+        self.prev_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= self.max_pages - 1
+
+    async def get_embed(self) -> discord.Embed:
+        page_data, self.total_count = await self.get_page_data()
+        self.max_pages = ceil(self.total_count / self.page_size)
+
+        embed = discord.Embed(
+            title="🔥 Trending Levels",
+            description="Most popular levels in the last 30 days",
+            color=0xff6600
+        )
+
+        start_idx = self.current_page * self.page_size
+
+        for idx, level in enumerate(page_data, start=start_idx + 1):
+            medal = ""
+
+            if idx == 1:
+                medal = "🥇"
+            elif idx == 2:
+                medal = "🥈"
+            elif idx == 3:
+                medal = "🥉"
+
+            embed.add_field(
+                name=f"{medal}#{idx}. {level['name']} ({level['levelID']})",
+                value=f"By **{level['creator']}** ({level['creatorID']})\n"
+                      f"Recent Sends: **{level['recent_sends']}**\n"
+                      f"Last Send: <t:{int(level['last_send'].timestamp())}:R> (<t:{int(level['last_send'].timestamp())}:F>)",
+                inline=False
+            )
+
+        embed.set_footer(text=f"Page {self.current_page + 1}/{self.max_pages} • Total Levels: {self.total_count}")
+        embed.timestamp = datetime.now(UTC)
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.owner_id
+
+    @discord.ui.button(label="Top", style=discord.ButtonStyle.primary, emoji="⬆️")
+    async def top_button(self, interaction: discord.Interaction, button: Button):
+        self.current_page = 0
+        self.update_buttons()
+        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="⬅️")
+    async def prev_button(self, interaction: discord.Interaction, button: Button):
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="➡️")
+    async def next_button(self, interaction: discord.Interaction, button: Button):
+        self.current_page = min(self.max_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+
+    @discord.ui.button(label="Go to...", style=discord.ButtonStyle.secondary)
+    async def goto_button(self, interaction: discord.Interaction, button: Button):
+        modal = PageModal(self.max_pages)
+        await interaction.response.send_modal(modal)
+        await modal.wait()
+
+        if modal.page is not None:
+            self.current_page = modal.page
+            self.update_buttons()
+            await interaction.edit_original_response(embed=await self.get_embed(), view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        try:
+            await self.message.edit(view=self)
+        except:
+            pass
+
 class FollowCommands(commands.GroupCog, name="follow"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -691,6 +834,12 @@ async def leaderboard(interaction: discord.Interaction):
     await interaction.response.send_message(embed=await view.get_embed(), view=view)
     view.message = await interaction.original_response()
 
+@client.tree.command(name="trending", description="Show currently trending levels")
+async def trending(interaction: discord.Interaction):
+    view = TrendingView(db, interaction.user.id)
+    await interaction.response.send_message(embed=await view.get_embed(), view=view)
+    view.message = await interaction.original_response()
+
 @client.tree.command(name="info", description="Show the bot's info and stats.")
 async def info(interaction: discord.Interaction):
     total_sends = db.get_total_sends()
@@ -717,6 +866,5 @@ Support Server: [SendDB](https://discord.gg/{invite})
     )
 
     await interaction.response.send_message(embed=embed)
-
 
 client.run(environ.get("BOT_TOKEN"))

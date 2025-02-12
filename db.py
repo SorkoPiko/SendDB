@@ -1,9 +1,11 @@
+from typing import Tuple, List, Any, Mapping
+
 from pymongo import UpdateOne
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from pymongo.collection import Collection
 from pymongo.database import Database
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 
 class SendDB:
     def __init__(self, connection_string: str):
@@ -140,3 +142,121 @@ class SendDB:
             {"name": {"$regex": f"^{query}", "$options": "i"}},
             {"_id": 1, "name": 1, "accountID": 1}
         ).limit(25))
+
+    def get_trending_levels(self, skip: int = 0, limit: int = 10, get_total: bool = False) -> tuple[list[dict], int]:
+        sends = self.get_collection("data", "sends")
+
+        base_pipeline = [
+            {
+                "$match": {
+                    "timestamp": {
+                        "$gte": datetime.now(UTC) - timedelta(days=30)
+                    }
+                }
+            },
+            {
+                "$addFields": {
+                    "age_hours": {
+                        "$divide": [
+                            {"$subtract": [datetime.now(UTC), "$timestamp"]},
+                            1000 * 60 * 60
+                        ]
+                    }
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$levelID",
+                    "score": {
+                        "$sum": {
+                            "$divide": [1, {"$add": ["$age_hours", 1]}]
+                        }
+                    },
+                    "recent_sends": {"$sum": 1},
+                    "latest_send": {"$max": "$timestamp"}
+                }
+            }
+        ]
+
+        if get_total:
+            pipeline = base_pipeline + [
+                {"$facet": {
+                    "total": [{"$count": "count"}],
+                    "data": [
+                        {
+                            "$lookup": {
+                                "from": "info",
+                                "localField": "_id",
+                                "foreignField": "_id",
+                                "as": "level_info"
+                            }
+                        },
+                        {"$unwind": "$level_info"},
+                        {
+                            "$lookup": {
+                                "from": "creators",
+                                "localField": "level_info.creator",
+                                "foreignField": "_id",
+                                "as": "creator_info"
+                            }
+                        },
+                        {"$unwind": "$creator_info"},
+                        {
+                            "$project": {
+                                "name": "$level_info.name",
+                                "levelID": "$_id",
+                                "creator": "$creator_info.name",
+                                "creatorID": "$creator_info._id",
+                                "score": 1,
+                                "recent_sends": 1,
+                                "latest_send": 1
+                            }
+                        },
+                        {"$sort": {"score": -1}},
+                        {"$skip": skip},
+                        {"$limit": limit}
+                    ]
+                }}
+            ]
+
+            result = list(sends.aggregate(pipeline))
+            if not result or not result[0]["total"]:
+                return [], 0
+
+            return result[0]["data"], result[0]["total"][0]["count"]
+        else:
+            pipeline = base_pipeline + [
+                {
+                    "$lookup": {
+                        "from": "info",
+                        "localField": "_id",
+                        "foreignField": "_id",
+                        "as": "level_info"
+                    }
+                },
+                {"$unwind": "$level_info"},
+                {
+                    "$lookup": {
+                        "from": "creators",
+                        "localField": "level_info.creator",
+                        "foreignField": "_id",
+                        "as": "creator_info"
+                    }
+                },
+                {"$unwind": "$creator_info"},
+                {
+                    "$project": {
+                        "name": "$level_info.name",
+                        "levelID": "$_id",
+                        "creator": "$creator_info.name",
+                        "creatorID": "$creator_info._id",
+                        "score": 1,
+                        "recent_sends": 1,
+                        "latest_send": 1
+                    }
+                },
+                {"$sort": {"score": -1}},
+                {"$limit": limit}
+            ]
+
+            return list(sends.aggregate(pipeline)), None
