@@ -173,7 +173,7 @@ class SendBot(commands.Bot):
                     name=f"{medal}#{idx}. {level['name']} ({level['levelID']})",
                     value=f"By **{level['creator']}** ({level['creatorID']})\n"
                           f"Recent Sends: **{level['recent_sends']}**\n"
-                          f"Last Send: <t:{int(level['latest_send'].timestamp())}:R> (<t:{int(level['latest_send'].timestamp())}:F>)",
+                          f"Last Send: <t:{int(level['latest_send'].timestamp())}:R>",
                     inline=False
                 )
 
@@ -590,7 +590,7 @@ class TrendingView(View):
                 name=f"{medal}#{idx}. {level['name']} ({level['levelID']})",
                 value=f"By **{level['creator']}** ({level['creatorID']})\n"
                       f"Recent Sends: **{level['recent_sends']}**\n"
-                      f"Last Send: <t:{int(level['latest_send'].timestamp())}:R> (<t:{int(level['latest_send'].timestamp())}:F>)",
+                      f"Last Send: <t:{int(level['latest_send'].timestamp())}:R>",
                 inline=False
             )
 
