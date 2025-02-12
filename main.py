@@ -3,7 +3,7 @@ import asyncio
 from dotenv import load_dotenv
 from os import environ
 import discord, os, json, re, git
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import Button, View
 from discord import app_commands
 from datetime import datetime, UTC
@@ -142,7 +142,7 @@ class SendBot(commands.Bot):
 
         self.trendingChannel = (self.get_channel(int(environ.get('TRENDING_CHANNEL_ID'))) or await self.fetch_channel(int(environ.get('TRENDING_CHANNEL_ID'))))
         if self.trendingChannel:
-            await self.loop.create_task(self.update_trending_message())
+            self.update_trending_message.start()
 
         checker.start(asyncio.get_running_loop())
         print(f"We have logged in as {self.user}.")
@@ -151,48 +151,46 @@ class SendBot(commands.Bot):
         checker.stop()
         await super().close()
 
+    @tasks.loop(minutes=1)
     async def update_trending_message(self):
-        while not self.is_closed():
-            try:
-                trending_levels, _ = db.get_trending_levels()
-                embed = discord.Embed(
-                    title="🔥 Trending Levels",
-                    description="Most popular levels in the last 30 days",
-                    color=0xff6600
+        try:
+            trending_levels, _ = db.get_trending_levels()
+            embed = discord.Embed(
+                title="🔥 Trending Levels",
+                description="Most popular levels in the last 30 days",
+                color=0xff6600
+            )
+
+            for idx, level in enumerate(trending_levels, 1):
+                if idx == 1:
+                    medal = "🥇"
+                elif idx == 2:
+                    medal = "🥈"
+                elif idx == 3:
+                    medal = "🥉"
+
+                embed.add_field(
+                    name=f"{medal}#{idx}. {level['name']} ({level['levelID']})",
+                    value=f"By **{level['creator']}** ({level['creatorID']})\n"
+                          f"Recent Sends: **{level['recent_sends']}**\n"
+                          f"Last Send: <t:{int(level['latest_send'].timestamp())}:R> (<t:{int(level['latest_send'].timestamp())}:F>)",
+                    inline=False
                 )
 
-                for idx, level in enumerate(trending_levels, 1):
-                    if idx == 1:
-                        medal = "🥇"
-                    elif idx == 2:
-                        medal = "🥈"
-                    elif idx == 3:
-                        medal = "🥉"
+            embed.timestamp = datetime.now(UTC)
 
-                    embed.add_field(
-                        name=f"{medal}#{idx}. {level['name']} ({level['levelID']})",
-                        value=f"By **{level['creator']}** ({level['creatorID']})\n"
-                              f"Recent Sends: **{level['recent_sends']}**\n"
-                              f"Last Send: <t:{int(level['latest_send'].timestamp())}:R> (<t:{int(level['latest_send'].timestamp())}:F>)",
-                        inline=False
-                    )
+            if self.trendingMessage:
+                await self.trendingMessage.edit(embed=embed)
+            if self.trendingMessageID:
+                self.trendingMessage = await self.trendingChannel.fetch_message(self.trendingMessageID)
+                await self.trendingMessage.edit(embed=embed)
+            else:
+                self.trendingMessage = await self.trendingChannel.send(embed=embed)
+                self.trendingMessageID = self.trendingMessage.id
+                save_previous_data(previous_levels)
 
-                embed.timestamp = datetime.now(UTC)
-
-                if self.trendingMessage:
-                    await self.trendingMessage.edit(embed=embed)
-                if self.trendingMessageID:
-                    self.trendingMessage = await self.trendingChannel.fetch_message(self.trendingMessageID)
-                    await self.trendingMessage.edit(embed=embed)
-                else:
-                    self.trendingMessage = await self.trendingChannel.send(embed=embed)
-                    self.trendingMessageID = self.trendingMessage.id
-                    save_previous_data(previous_levels)
-
-            except Exception as e:
-                print(f"Error updating trending message: {e}")
-
-            await asyncio.sleep(60)
+        except Exception as e:
+            print(f"Error updating trending message: {e}")
 
 client = SendBot()
 
