@@ -122,7 +122,7 @@ checker = SentChecker(onSendResults, sendBanNotification)
 
 class SendBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix='=', intents=discord.Intents.messages())
+        super().__init__(command_prefix='=', intents=discord.Intents.none())
         self.sendChannel: discord.TextChannel = None
         self.trendingChannel: discord.TextChannel = None
         self.trendingMessageID = previous_data.get("trending_message", None)
