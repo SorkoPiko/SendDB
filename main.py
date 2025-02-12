@@ -95,6 +95,7 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
                 "name": levels[i]["name"],
                 "creator": creator_name,
                 "creatorID": accountMap[levels[i]["creatorID"]],
+                "playerID": levels[i]["creatorID"],
                 "sends": 1
             }]
 
@@ -482,7 +483,7 @@ class LeaderboardView(View):
 
             if self.type == LeaderboardType.CREATORS:
                 embed.add_field(
-                    name=f"{medal}#{idx}. {entry['name']} ({entry['accountID']})",
+                    name=f"{medal}#{idx}. {entry['name']} ({entry['creatorID']})",
                     value=f"Total Sends: **{entry['sends']}** over `{entry['level_count']}` level{'s' if entry['level_count'] != 1 else ''}",
                     inline=False
                 )
@@ -746,7 +747,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
 
 async def notify_followers(level_info: dict, timestamp: datetime):
     level_followers = db.get_followers("level", level_info["_id"])
-    creator_followers = db.get_followers("creator", level_info["creator"])
+    creator_followers = db.get_followers("creator", level_info["playerID"])
 
     followers = set(level_followers + creator_followers)
 
@@ -771,7 +772,7 @@ async def sendMessage(info: list[dict], timestamp: datetime):
     for level in info:
         embed = discord.Embed(
             title=level["name"],
-            description=f"By **{level['creator']}** ({level['creatorID']})\nTotal Sends: **{level['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level['_id']}) (`{level['_id']}`)",
+            description=f"By **{level['creator']}** ({level['playerID']})\nTotal Sends: **{level['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level['_id']}) (`{level['_id']}`)",
             color=0x00ff00
         )
         embed.set_author(name=level["creator"], url=f"https://gdbrowser.com/u/{level['creatorID']}", icon_url="https://gdbrowser.com/assets/cp.png")
