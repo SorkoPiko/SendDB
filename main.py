@@ -153,6 +153,13 @@ class SendBot(commands.Bot):
         checker.stop()
         await super().close()
 
+    async def get_command_id(self, command_name: str):
+        commands = await self.tree.fetch_commands()
+        for command in commands:
+            if command.name == command_name:
+                return command.id
+        return None
+
     @tasks.loop(minutes=1)
     async def update_trending_message(self):
         try:
@@ -164,6 +171,8 @@ class SendBot(commands.Bot):
             )
 
             for idx, level in enumerate(trending_levels, 1):
+                medal = ""
+
                 if idx == 1:
                     medal = "🥇"
                 elif idx == 2:
@@ -180,15 +189,16 @@ class SendBot(commands.Bot):
                 )
 
             embed.timestamp = datetime.now(UTC)
-            embed.set_footer(text="View the full leaderboard with `/trending`")
+            command_id = await self.get_command_id("trending")
+            content = f"View the full leaderboard with </trending:{command_id}>" if command_id else ""
 
             if self.trendingMessage:
-                await self.trendingMessage.edit(embed=embed)
+                await self.trendingMessage.edit(embed=embed, content=content)
             if self.trendingMessageID:
                 self.trendingMessage = await self.trendingChannel.fetch_message(self.trendingMessageID)
-                await self.trendingMessage.edit(embed=embed)
+                await self.trendingMessage.edit(embed=embed, content=content)
             else:
-                self.trendingMessage = await self.trendingChannel.send(embed=embed)
+                self.trendingMessage = await self.trendingChannel.send(embed=embed, content=content)
                 self.trendingMessageID = self.trendingMessage.id
                 save_previous_data(previous_levels)
 
