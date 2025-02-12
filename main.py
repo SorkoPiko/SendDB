@@ -187,6 +187,7 @@ class SendBot(commands.Bot):
                 else:
                     self.trendingMessage = await self.trendingChannel.send(embed=embed)
                     self.trendingMessageID = self.trendingMessage.id
+                    save_previous_data(previous_levels)
 
             except Exception as e:
                 print(f"Error updating trending message: {e}")
