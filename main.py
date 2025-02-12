@@ -1,5 +1,7 @@
 import asyncio
 
+from certifi import contents
+from discord.app_commands import AppCommand
 from dotenv import load_dotenv
 from os import environ
 import discord, os, json, re, git
@@ -178,6 +180,7 @@ class SendBot(commands.Bot):
                 )
 
             embed.timestamp = datetime.now(UTC)
+            embed.set_footer(text="View the full leaderboard with `/trending`")
 
             if self.trendingMessage:
                 await self.trendingMessage.edit(embed=embed)
@@ -191,6 +194,11 @@ class SendBot(commands.Bot):
 
         except Exception as e:
             print(f"Error updating trending message: {e}")
+
+    @commands.setter
+    def commands(self, value):
+        self._commands = value
+
 
 client = SendBot()
 
