@@ -205,11 +205,6 @@ class SendBot(commands.Bot):
         except Exception as e:
             print(f"Error updating trending message: {e}")
 
-    @commands.setter
-    def commands(self, value):
-        self._commands = value
-
-
 client = SendBot()
 
 class LeaderboardType(Enum):
