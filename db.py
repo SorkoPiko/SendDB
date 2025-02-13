@@ -170,13 +170,13 @@ class SendDB:
                     "score": {
                         "$sum": {
                             "$multiply": [
-                                45000,
+                                25000,
                                 {
                                     "$divide": [
                                         1,
                                         {"$pow": [
                                             {"$add": [{"$divide": ["$age_hours", 24]}, 2]},
-                                            1.5
+                                            1
                                         ]}
                                     ]
                                 }
