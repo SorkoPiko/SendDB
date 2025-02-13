@@ -483,7 +483,7 @@ class LeaderboardView(View):
 
             if self.type == LeaderboardType.CREATORS:
                 embed.add_field(
-                    name=f"{medal}#{idx}. {entry['name']} ({entry['creatorID']})",
+                    name=f"{medal}#{idx}. {entry['name']} ({entry['accountID']})",
                     value=f"Total Sends: **{entry['sends']}** over `{entry['level_count']}` level{'s' if entry['level_count'] != 1 else ''}",
                     inline=False
                 )
