@@ -115,6 +115,7 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
                 if level["_id"] == sendID:
                     level["sends"] = sendCount["count"]
                     await notify_followers(level, timestamp)
+                    await client.update_trending_message()
 
         await sendMessage(webhookInfo, timestamp)
 
