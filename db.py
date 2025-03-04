@@ -290,11 +290,11 @@ class SendDB:
         suggestions = self.get_collection("data", "suggestions")
         user_scores = self.get_collection("data", "user_scores")
 
-        match_stage = {"status": "pending"}
+        match_stage = {}
         if level_id is not None:
             match_stage["levelID"] = level_id
         if moderator_id is not None:
-            # Exclude suggestions this moderator has already handled
+            # Only show suggestions this moderator hasn't handled
             match_stage["moderatedBy"] = {"$ne": moderator_id}
 
         base_pipeline = [
@@ -404,24 +404,30 @@ class SendDB:
             return data, None
 
     def moderate_suggestion(self, suggestion_id: str, moderator_id: int, is_sent: bool, difficulty: int = None, rating: int = None):
-        """Mark a suggestion as moderated with sent status and optional ratings."""
+        """Mark a suggestion as moderated with a moderator's decision."""
         suggestions = self.get_collection("data", "suggestions")
         
-        update = {
-            "$set": {
-                "status": "moderated",
-                "moderatorID": moderator_id,
-                "moderatedBy": moderator_id,  # Additional field to track who moderated it
-                "moderatorTimestamp": datetime.now(UTC),
-                "is_sent": is_sent
-            }
+        decision = {
+            "moderatorID": moderator_id,
+            "timestamp": datetime.now(UTC),
+            "is_sent": is_sent
         }
         
         if is_sent and difficulty is not None and rating is not None:
-            update["$set"].update({
-                "mod_difficulty": difficulty,
-                "mod_rating": rating
+            decision.update({
+                "difficulty": difficulty,
+                "rating": rating
             })
+        
+        # Add the decision to the decisions array and mark as seen by this moderator
+        update = {
+            "$push": {
+                "decisions": decision
+            },
+            "$addToSet": {
+                "moderatedBy": moderator_id
+            }
+        }
         
         suggestions.update_one(
             {"_id": ObjectId(suggestion_id)},
@@ -520,33 +526,42 @@ class SendDB:
             return data, None
 
     def _update_user_score(self, user_id: int):
-        """Update a user's suggestion score."""
+        """Update a user's suggestion score based on moderator decisions."""
         suggestions = self.get_collection("data", "suggestions")
         user_scores = self.get_collection("data", "user_scores")
 
-        # Get all suggestions by this user
-        user_suggestions = list(suggestions.find({"userID": user_id}))
+        # Get all suggestions by this user that have at least one decision
+        user_suggestions = list(suggestions.find({
+            "userID": user_id,
+            "decisions": {"$exists": True, "$ne": []}
+        }))
+        
         if not user_suggestions:
             return
 
-        total_suggestions = len(user_suggestions)
-        approved_suggestions = sum(1 for s in user_suggestions if s["status"] == "approved")
-        rejected_suggestions = sum(1 for s in user_suggestions if s["status"] == "rejected")
+        total_decisions = 0
+        approved_decisions = 0
         
-        # Calculate base accuracy
-        base_accuracy = (approved_suggestions / total_suggestions) if total_suggestions > 0 else 0
-        weighted_score = base_accuracy  # Simplified scoring since we no longer compare with final ratings
-
+        # Count decisions from all moderators
+        for suggestion in user_suggestions:
+            for decision in suggestion.get("decisions", []):
+                total_decisions += 1
+                if decision["is_sent"]:
+                    approved_decisions += 1
+        
+        # Calculate accuracy based on all moderator decisions
+        accuracy = (approved_decisions / total_decisions) if total_decisions > 0 else 0
+        
         # Update user scores
         user_scores.update_one(
             {"_id": user_id},
             {
                 "$set": {
-                    "total_suggestions": total_suggestions,
-                    "approved_suggestions": approved_suggestions,
-                    "rejected_suggestions": rejected_suggestions,
-                    "accuracy_score": base_accuracy * 100,  # Store as percentage
-                    "weighted_score": weighted_score * 100,  # Store as percentage
+                    "total_suggestions": len(user_suggestions),
+                    "total_moderator_decisions": total_decisions,
+                    "approved_decisions": approved_decisions,
+                    "accuracy_score": accuracy * 100,  # Store as percentage
+                    "weighted_score": accuracy * 100,  # Store as percentage
                     "last_updated": datetime.now(UTC)
                 }
             },
@@ -559,8 +574,8 @@ class SendDB:
         return user_scores.find_one({"_id": user_id}) or {
             "_id": user_id,
             "total_suggestions": 0,
-            "approved_suggestions": 0,
-            "rejected_suggestions": 0,
+            "total_moderator_decisions": 0,
+            "approved_decisions": 0,
             "accuracy_score": 0,
             "weighted_score": 0,
             "last_updated": None
