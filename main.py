@@ -827,9 +827,14 @@ class ModReviewView(View):
 							ephemeral=True
 						)
 						
-						# Continue to next level
-						self.outer_view.page += 1
+						# Get current page data to check if there are still levels to review
 						levels, _ = await self.outer_view.get_page_data()
+						
+						# If no more levels on current page, go to previous page if possible
+						if not levels and self.outer_view.page > 0:
+							self.outer_view.page -= 1
+							levels, _ = await self.outer_view.get_page_data()
+						
 						self.outer_view.update_buttons(levels)
 						await self.outer_view.message.edit(embed=await self.outer_view.get_embed(), view=self.outer_view)
 						
@@ -856,9 +861,14 @@ class ModReviewView(View):
 				ephemeral=True
 			)
 			
-			# Continue to next level
-			self.page += 1
+			# Get current page data to check if there are still levels to review
 			levels, _ = await self.get_page_data()
+			
+			# If no more levels on current page, go to previous page if possible
+			if not levels and self.page > 0:
+				self.page -= 1
+				levels, _ = await self.get_page_data()
+			
 			self.update_buttons(levels)
 			await self.message.edit(embed=await self.get_embed(), view=self)
 			
