@@ -563,42 +563,74 @@ class SendDB:
             return data, None
 
     def _update_user_score(self, user_id: int):
-        """Update a user's suggestion score based on moderator decisions."""
+        """Update a user's suggestion score based on moderator decisions and suggestion accuracy."""
         suggestions = self.get_collection("data", "suggestions")
         user_scores = self.get_collection("data", "user_scores")
 
-        # Get all suggestions by this user that have at least one decision
+        # Get all suggestions by this user that have at least one decision with difficulty and rating
         user_suggestions = list(suggestions.find({
             "userID": user_id,
-            "decisions": {"$exists": True, "$ne": []}
+            "decisions": {
+                "$exists": True,
+                "$ne": [],
+                "$elemMatch": {
+                    "is_sent": True,
+                    "difficulty": {"$exists": True},
+                    "rating": {"$exists": True}
+                }
+            }
         }))
         
         if not user_suggestions:
             return
 
+        total_weight = 0
+        total_suggestions = len(user_suggestions)
         total_decisions = 0
-        approved_decisions = 0
+        total_sent = 0
         
-        # Count decisions from all moderators
         for suggestion in user_suggestions:
-            for decision in suggestion.get("decisions", []):
-                total_decisions += 1
-                if decision["is_sent"]:
-                    approved_decisions += 1
+            sent_decisions = [d for d in suggestion.get("decisions", []) if d["is_sent"]]
+            not_sent_decisions = [d for d in suggestion.get("decisions", []) if not d["is_sent"]]
+            
+            total_decisions += len(suggestion.get("decisions", []))
+            total_sent += len(sent_decisions)
+
+            if sent_decisions:  # If any moderator marked it as sent
+                # Calculate average moderator difficulty and rating
+                avg_mod_difficulty = sum(d["difficulty"] for d in sent_decisions) / len(sent_decisions)
+                avg_mod_rating = sum(d["rating"] for d in sent_decisions) / len(sent_decisions)
+                
+                # Calculate accuracy scores (0-1 range)
+                difficulty_accuracy = 1 - (abs(suggestion["difficulty"] - avg_mod_difficulty) / 9)  # 9 is max difference (1 vs 10)
+                rating_accuracy = 1 - (abs(suggestion["rating"] - avg_mod_rating) / 4)  # 4 is max difference (1 vs 5)
+                
+                # Weight calculation:
+                # Base weight of 1 for getting sent/not sent correct
+                # Additional weight up to 2 for difficulty accuracy
+                # Additional weight up to 2 for rating accuracy
+                suggestion_weight = 1 + (2 * difficulty_accuracy) + (2 * rating_accuracy)
+                total_weight += suggestion_weight
+            
+            elif not_sent_decisions:  # If moderators only marked it as not sent
+                # Small penalty for suggesting a level that wasn't sent
+                total_weight += 0.5
         
-        # Calculate accuracy based on all moderator decisions
-        accuracy = (approved_decisions / total_decisions) if total_decisions > 0 else 0
+        # Calculate final weighted score (max possible score is 5 per suggestion)
+        weighted_score = (total_weight / total_suggestions) if total_suggestions > 0 else 0
+        # Scale to 0-100 range
+        scaled_score = (weighted_score / 5) * 100
         
         # Update user scores
         user_scores.update_one(
             {"_id": user_id},
             {
                 "$set": {
-                    "total_suggestions": len(user_suggestions),
+                    "total_suggestions": total_suggestions,
                     "total_moderator_decisions": total_decisions,
-                    "approved_decisions": approved_decisions,
-                    "accuracy_score": accuracy * 100,  # Store as percentage
-                    "weighted_score": accuracy * 100,  # Store as percentage
+                    "approved_decisions": total_sent,
+                    "weighted_score": scaled_score,
+                    "raw_weight": weighted_score,
                     "last_updated": datetime.now(UTC)
                 }
             },
@@ -613,8 +645,8 @@ class SendDB:
             "total_suggestions": 0,
             "total_moderator_decisions": 0,
             "approved_decisions": 0,
-            "accuracy_score": 0,
             "weighted_score": 0,
+            "raw_weight": 0,
             "last_updated": None
         }
 

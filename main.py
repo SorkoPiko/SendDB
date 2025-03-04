@@ -877,24 +877,46 @@ class SuggesterView(View):
 		embed = discord.Embed(
 			title=f"Suggester Profile: {user.name}",
 			description=f"Total Suggestions: **{user_score['total_suggestions']}**\n"
-					f"Approved: **{user_score['approved_suggestions']}**\n"
-					f"Rejected: **{user_score['rejected_suggestions']}**\n"
-					f"Pending: **{user_score['total_suggestions'] - user_score['approved_suggestions'] - user_score['rejected_suggestions']}**\n"
-					f"Accuracy Score: **{user_score['accuracy_score']:.1f}%**",
+					f"Total Decisions: **{user_score['total_moderator_decisions']}**\n"
+					f"Approved: **{user_score['approved_decisions']}**\n"
+					f"Pending: **{user_score['total_suggestions'] - user_score['total_moderator_decisions']}**\n"
+					f"Weighted Score: **{user_score['weighted_score']:.1f}** (Raw Weight: {user_score['raw_weight']:.2f})\n\n"
+					f"*Score is based on suggestion accuracy. Max score is 100 (raw weight 5.0).\n"
+					f"Each suggestion can earn up to 5 points:\n"
+					f"• 1 point for correctly predicting if a level gets sent\n"
+					f"• Up to 2 points for difficulty accuracy\n"
+					f"• Up to 2 points for rating accuracy*",
 			color=0x00ff00
 		)
 
 		start_idx = self.current_page * self.page_size
 
 		for idx, suggestion in enumerate(page_data, start=start_idx + 1):
-			status_emoji = "✅" if suggestion["status"] == "approved" else "❌" if suggestion["status"] == "rejected" else "⏳"
+			status_emoji = "✅" if suggestion.get("decisions", []) and any(d["is_sent"] for d in suggestion["decisions"]) else "❌" if suggestion.get("decisions") else "⏳"
+			
+			# Calculate averages if the suggestion was approved
+			sent_decisions = [d for d in suggestion.get("decisions", []) if d.get("is_sent")]
+			if sent_decisions:
+				avg_difficulty = sum(d["difficulty"] for d in sent_decisions) / len(sent_decisions)
+				avg_rating = sum(d["rating"] for d in sent_decisions) / len(sent_decisions)
+				
+				difficulty_diff = abs(suggestion["difficulty"] - avg_difficulty)
+				rating_diff = abs(suggestion["rating"] - avg_rating)
+				
+				value = f"By **{suggestion['creator_name']}**\n" \
+					   f"Your Suggestion: **{suggestion['difficulty']}/10** difficulty, **{suggestion['rating']}/5** rating\n" \
+					   f"Final Decision: **{avg_difficulty:.1f}/10** difficulty, **{avg_rating:.1f}/5** rating\n" \
+					   f"Difference: ±**{difficulty_diff:.1f}** difficulty, ±**{rating_diff:.1f}** rating\n" \
+					   f"Suggested: <t:{int(suggestion['timestamp'].timestamp())}:R>"
+			else:
+				value = f"By **{suggestion['creator_name']}**\n" \
+					   f"Difficulty: **{suggestion['difficulty']}/10**\n" \
+					   f"Rating: **{suggestion['rating']}/5**\n" \
+					   f"Suggested: <t:{int(suggestion['timestamp'].timestamp())}:R>"
 			
 			embed.add_field(
 				name=f"{status_emoji} {suggestion['level_name']} ({suggestion['levelID']})",
-				value=f"By **{suggestion['creator_name']}**\n"
-					f"Difficulty: **{suggestion['difficulty']}/10**\n"
-					f"Rating: **{suggestion['rating']}/5**\n"
-					f"Suggested: <t:{int(suggestion['timestamp'].timestamp())}:R>",
+				value=value,
 				inline=False
 			)
 
