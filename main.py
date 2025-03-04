@@ -20,16 +20,16 @@ db = SendDB(f"mongodb+srv://{environ.get('MONGO_USERNAME')}:{environ.get('MONGO_
 
 OLDEST_LEVEL = int(environ.get("OLDEST_LEVEL"))
 DIFFICULTIES = {
-	1: "Auto (1⭐)",
-	2: "Easy (2⭐)",
-	3: "Normal (3⭐)",
-	4: "Hard (4⭐)",
-	5: "Hard (5⭐)",
-	6: "Harder (6⭐)",
-	7: "Harder (7⭐)",
-	8: "Insane (8⭐)",
-	9: "Insane (9⭐)",
-	10: "Demon (10⭐)"
+	1: "Auto 1⭐",
+	2: "Easy 2⭐",
+	3: "Normal 3⭐",
+	4: "Hard 4⭐",
+	5: "Hard 5⭐",
+	6: "Harder 6⭐",
+	7: "Harder 7⭐",
+	8: "Insane 8⭐",
+	9: "Insane 9⭐",
+	10: "Demon 10⭐"
 }
 RATINGS = {
 	1: "Rate",
