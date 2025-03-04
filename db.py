@@ -307,7 +307,7 @@ class SendDB:
                     "as": "user_score"
                 }
             },
-            {"$unwind": {"path": "$user_score", "preserveNullAndEmpty": True}},
+            {"$unwind": {"path": "$user_score", "preserveNullAndEmptyArrays": True}},
             {
                 "$addFields": {
                     "weighted_score": {"$ifNull": ["$user_score.weighted_score", 0]}
