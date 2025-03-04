@@ -285,17 +285,46 @@ class SendDB:
             "status": "pending"
         })
 
+    def add_moderator_send(self, level_id: int, moderator_id: int, difficulty: int, rating: int):
+        """Record a moderator's send decision for a level."""
+        moderator_sends = self.get_collection("data", "moderator_sends")
+        moderator_sends.insert_one({
+            "levelID": level_id,
+            "moderatorID": moderator_id,
+            "difficulty": difficulty,
+            "rating": rating,
+            "timestamp": datetime.now(UTC)
+        })
+
+    def get_moderator_sends(self, level_id: int = None, moderator_id: int = None) -> list[dict]:
+        """Get moderator sends, optionally filtered by level ID and/or moderator ID."""
+        moderator_sends = self.get_collection("data", "moderator_sends")
+        
+        query = {}
+        if level_id is not None:
+            query["levelID"] = level_id
+        if moderator_id is not None:
+            query["moderatorID"] = moderator_id
+        
+        return list(moderator_sends.find(query))
+
     def get_pending_suggestions(self, level_id: int = None, skip: int = 0, limit: int = 10, get_total: bool = False, moderator_id: int = None) -> tuple[list[dict], int]:
-        """Get pending suggestions, optionally filtered by level ID and excluding those already moderated by the given moderator."""
+        """Get pending suggestions, optionally filtered by level ID and excluding those already sent by the given moderator."""
         suggestions = self.get_collection("data", "suggestions")
         user_scores = self.get_collection("data", "user_scores")
+        moderator_sends = self.get_collection("data", "moderator_sends")
+
+        # Get all levels this moderator has sent
+        sent_levels = []
+        if moderator_id is not None:
+            sent_levels = [send["levelID"] for send in self.get_moderator_sends(moderator_id=moderator_id)]
 
         match_stage = {}
         if level_id is not None:
             match_stage["levelID"] = level_id
         if moderator_id is not None:
-            # Only show suggestions this moderator hasn't handled
-            match_stage["moderatedBy"] = {"$ne": moderator_id}
+            # Exclude levels this moderator has already sent
+            match_stage["levelID"] = {"$nin": sent_levels}
 
         base_pipeline = [
             {"$match": match_stage},
@@ -563,23 +592,13 @@ class SendDB:
             return data, None
 
     def _update_user_score(self, user_id: int):
-        """Update a user's suggestion score based on moderator decisions and suggestion accuracy."""
+        """Update a user's suggestion score based on moderator sends and suggestion accuracy."""
         suggestions = self.get_collection("data", "suggestions")
         user_scores = self.get_collection("data", "user_scores")
+        moderator_sends = self.get_collection("data", "moderator_sends")
 
-        # Get all suggestions by this user that have at least one decision with difficulty and rating
-        user_suggestions = list(suggestions.find({
-            "userID": user_id,
-            "decisions": {
-                "$exists": True,
-                "$ne": [],
-                "$elemMatch": {
-                    "is_sent": True,
-                    "difficulty": {"$exists": True},
-                    "rating": {"$exists": True}
-                }
-            }
-        }))
+        # Get all suggestions by this user
+        user_suggestions = list(suggestions.find({"userID": user_id}))
         
         if not user_suggestions:
             return
@@ -590,16 +609,16 @@ class SendDB:
         total_sent = 0
         
         for suggestion in user_suggestions:
-            sent_decisions = [d for d in suggestion.get("decisions", []) if d["is_sent"]]
-            not_sent_decisions = [d for d in suggestion.get("decisions", []) if not d["is_sent"]]
+            # Get all moderator sends for this level
+            level_sends = self.get_moderator_sends(level_id=suggestion["levelID"])
             
-            total_decisions += len(suggestion.get("decisions", []))
-            total_sent += len(sent_decisions)
-
-            if sent_decisions:  # If any moderator marked it as sent
+            if level_sends:  # If any moderator sent this level
+                total_decisions += 1
+                total_sent += 1
+                
                 # Calculate average moderator difficulty and rating
-                avg_mod_difficulty = sum(d["difficulty"] for d in sent_decisions) / len(sent_decisions)
-                avg_mod_rating = sum(d["rating"] for d in sent_decisions) / len(sent_decisions)
+                avg_mod_difficulty = sum(send["difficulty"] for send in level_sends) / len(level_sends)
+                avg_mod_rating = sum(send["rating"] for send in level_sends) / len(level_sends)
                 
                 # Calculate accuracy scores (0-1 range)
                 difficulty_accuracy = 1 - (abs(suggestion["difficulty"] - avg_mod_difficulty) / 9)  # 9 is max difference (1 vs 10)
@@ -612,9 +631,10 @@ class SendDB:
                 suggestion_weight = 1 + (2 * difficulty_accuracy) + (2 * rating_accuracy)
                 total_weight += suggestion_weight
             
-            elif not_sent_decisions:  # If moderators only marked it as not sent
-                # Small penalty for suggesting a level that wasn't sent
+            else:  # Level hasn't been sent by any moderator
+                # Small penalty for suggesting a level that hasn't been sent
                 total_weight += 0.5
+                total_decisions += 1
         
         # Calculate final weighted score (max possible score is 5 per suggestion)
         weighted_score = (total_weight / total_suggestions) if total_suggestions > 0 else 0

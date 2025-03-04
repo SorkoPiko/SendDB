@@ -817,10 +817,12 @@ class ReviewQueueView(View):
 		difficulty = round(suggestion["difficulty"])
 		rating = round(suggestion["rating"])
 		
-		# Mark all suggestions for this level as moderated
-		for suggestion_data in suggestion["suggestions"]:
-			self.db.moderate_suggestion(suggestion_data["_id"], self.user_id, True, difficulty, rating)
+		# Record the moderator's send decision
+		self.db.add_moderator_send(suggestion["levelID"], self.user_id, difficulty, rating)
 
+		# Move to next suggestion
+		self.current_page = min(self.max_pages - 1, self.current_page + 1)
+		self.update_buttons()
 		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
 	@discord.ui.button(label="Not Sent ❌", style=discord.ButtonStyle.danger)
@@ -834,10 +836,9 @@ class ReviewQueueView(View):
 			await interaction.response.send_message("❌ No suggestions to review", ephemeral=True)
 			return
 
-		# Mark all suggestions for this level as not sent
-		for suggestion_data in suggestion["suggestions"]:
-			self.db.moderate_suggestion(suggestion_data["_id"], self.user_id, False)
-
+		# Move to next suggestion without recording a send
+		self.current_page = min(self.max_pages - 1, self.current_page + 1)
+		self.update_buttons()
 		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
 	async def on_timeout(self):
@@ -877,35 +878,37 @@ class SuggesterView(View):
 		embed = discord.Embed(
 			title=f"Suggester Profile: {user.name}",
 			description=f"Total Suggestions: **{user_score['total_suggestions']}**\n"
-					f"Total Decisions: **{user_score['total_moderator_decisions']}**\n"
-					f"Approved: **{user_score['approved_decisions']}**\n"
-					f"Pending: **{user_score['total_suggestions'] - user_score['total_moderator_decisions']}**\n"
+					f"Reviewed Suggestions: **{user_score['total_moderator_decisions']}**\n"
+					f"Sent Levels: **{user_score['approved_decisions']}**\n"
+					f"Pending Review: **{user_score['total_suggestions'] - user_score['total_moderator_decisions']}**\n"
 					f"Weighted Score: **{user_score['weighted_score']:.1f}** (Raw Weight: {user_score['raw_weight']:.2f})\n\n"
 					f"*Score is based on suggestion accuracy. Max score is 100 (raw weight 5.0).\n"
 					f"Each suggestion can earn up to 5 points:\n"
-					f"• 1 point for correctly predicting if a level gets sent\n"
+					f"• 1 point for suggesting a level that gets sent\n"
 					f"• Up to 2 points for difficulty accuracy\n"
-					f"• Up to 2 points for rating accuracy*",
+					f"• Up to 2 points for rating accuracy\n"
+					f"• 0.5 points for levels not yet sent*",
 			color=0x00ff00
 		)
 
 		start_idx = self.current_page * self.page_size
 
 		for idx, suggestion in enumerate(page_data, start=start_idx + 1):
-			status_emoji = "✅" if suggestion.get("decisions", []) and any(d["is_sent"] for d in suggestion["decisions"]) else "❌" if suggestion.get("decisions") else "⏳"
+			# Get moderator sends for this level
+			level_sends = self.db.get_moderator_sends(level_id=suggestion["levelID"])
 			
-			# Calculate averages if the suggestion was approved
-			sent_decisions = [d for d in suggestion.get("decisions", []) if d.get("is_sent")]
-			if sent_decisions:
-				avg_difficulty = sum(d["difficulty"] for d in sent_decisions) / len(sent_decisions)
-				avg_rating = sum(d["rating"] for d in sent_decisions) / len(sent_decisions)
+			status_emoji = "✅" if level_sends else "⏳"
+			
+			if level_sends:
+				avg_difficulty = sum(send["difficulty"] for send in level_sends) / len(level_sends)
+				avg_rating = sum(send["rating"] for send in level_sends) / len(level_sends)
 				
 				difficulty_diff = abs(suggestion["difficulty"] - avg_difficulty)
 				rating_diff = abs(suggestion["rating"] - avg_rating)
 				
 				value = f"By **{suggestion['creator_name']}**\n" \
 					   f"Your Suggestion: **{suggestion['difficulty']}/10** difficulty, **{suggestion['rating']}/5** rating\n" \
-					   f"Final Decision: **{avg_difficulty:.1f}/10** difficulty, **{avg_rating:.1f}/5** rating\n" \
+					   f"Moderator Average: **{avg_difficulty:.1f}/10** difficulty, **{avg_rating:.1f}/5** rating\n" \
 					   f"Difference: ±**{difficulty_diff:.1f}** difficulty, ±**{rating_diff:.1f}** rating\n" \
 					   f"Suggested: <t:{int(suggestion['timestamp'].timestamp())}:R>"
 			else:
