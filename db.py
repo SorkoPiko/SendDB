@@ -1,4 +1,4 @@
-from typing import Tuple, List, Any, Mapping
+from typing import Tuple, List, Any, Mapping, Optional
 
 from pymongo import UpdateOne
 from pymongo.mongo_client import MongoClient
@@ -335,18 +335,27 @@ class SendDB:
 					
 		return user_suggestions
 	
-	def add_mod_rating(self, mod_id: int, level_id: int, difficulty: int, rating: int):
+	def add_mod_rating(self, mod_id: int, level_id: int, difficulty: int = None, rating: int = None, rejected: bool = False):
 		"""Add a moderator's rating for a level"""
 		mod_ratings = self.get_collection("data", "mod_ratings")
+		
+		# Create rating data with required fields
+		rating_data = {
+			"timestamp": datetime.now(UTC),
+			"rejected": rejected
+		}
+		
+		# Add optional fields if provided
+		if difficulty is not None:
+			rating_data["difficulty"] = difficulty
+		
+		if rating is not None:
+			rating_data["rating"] = rating
 		
 		# Create or update mod rating
 		mod_ratings.update_one(
 			{"mod_id": mod_id, "level_id": level_id},
-			{"$set": {
-				"difficulty": difficulty,
-				"rating": rating,
-				"timestamp": datetime.now(UTC)
-			}},
+			{"$set": rating_data},
 			upsert=True
 		)
 		
@@ -358,7 +367,10 @@ class SendDB:
 		)
 		
 		# Update user weights based on how close their suggestions were
-		self._update_user_weights(level_id, difficulty, rating)
+		if rejected:
+			self._update_user_weights_for_rejected(level_id)
+		elif difficulty is not None and rating is not None:
+			self._update_user_weights(level_id, difficulty, rating)
 	
 	def get_mod_ratings(self, level_id: int) -> list[dict]:
 		"""Get all moderator ratings for a level"""
@@ -447,61 +459,78 @@ class SendDB:
 				]
 			)
 	
-	def get_pending_suggestions(self, page: int = 0, limit: int = 10) -> tuple[list[dict], int]:
-		"""Get levels with pending user suggestions that need moderator review"""
-		suggestions = self.get_collection("data", "user_suggestions")
+	def get_pending_suggestions(self, page: int = 0, page_size: int = 10, mod_id: Optional[int] = None):
+		"""
+		Retrieves a paginated list of levels that have user suggestions but haven't been fully reviewed by moderators.
 		
-		# Find levels that have unprocessed suggestions
+		Args:
+			page: Page number (0-indexed)
+			page_size: Number of results per page
+			mod_id: If provided, filter out levels this moderator has already rated
+			
+		Returns:
+			tuple: (list of level dicts, total count)
+		"""
+		match_filter = {}
+		
+		# If mod_id is provided, filter out levels this moderator has already rated
+		if mod_id is not None:
+			# Get all level IDs that this moderator has already rated
+			already_rated = []
+			mod_ratings = self.get_collection("data", "mod_ratings").find({"mod_id": mod_id})
+			for rating in mod_ratings:
+				already_rated.append(rating["level_id"])
+			
+			if already_rated:
+				match_filter["level_id"] = {"$nin": already_rated}
+		
+		# Get levels with suggestions that need review
 		pipeline = [
-			{"$match": {"processed_by_mod": False}},
-			{"$group": {
-				"_id": "$level_id",
-				"suggestion_count": {"$sum": 1},
-				"latest_suggestion": {"$max": "$timestamp"}
+			{"$match": {"suggestions": {"$exists": True, "$ne": []}}},
+			{"$match": match_filter},
+			{"$project": {
+				"level_id": 1, 
+				"name": 1, 
+				"creator": 1,
+				"suggestion_count": {"$size": "$suggestions"},
+				"latest_suggestion": {"$max": "$suggestions.timestamp"}
 			}},
 			{"$sort": {"latest_suggestion": -1}},
 			{"$facet": {
-				"total": [{"$count": "count"}],
-				"data": [
-					{"$skip": page * limit},
-					{"$limit": limit},
-					{
-						"$lookup": {
-							"from": "info",
-							"localField": "_id",
-							"foreignField": "_id",
-							"as": "level_info"
-						}
-					},
-					{"$unwind": {"path": "$level_info", "preserveNullAndEmptyArrays": True}},
-					{
-						"$lookup": {
-							"from": "creators",
-							"localField": "level_info.creator",
-							"foreignField": "_id",
-							"as": "creator_info"
-						}
-					},
-					{"$unwind": {"path": "$creator_info", "preserveNullAndEmptyArrays": True}},
-					{
-						"$project": {
-							"level_id": "$_id",
-							"level_name": {"$ifNull": ["$level_info.name", "Unknown"]},
-							"creator_id": {"$ifNull": ["$level_info.creator", 0]},
-							"creator_name": {"$ifNull": ["$creator_info.name", "Unknown"]},
-							"suggestion_count": 1,
-							"latest_suggestion": 1
-						}
-					}
-				]
+				"paginatedResults": [
+					{"$skip": page * page_size},
+					{"$limit": page_size}
+				],
+				"totalCount": [{"$count": "count"}]
 			}}
 		]
 		
-		result = list(suggestions.aggregate(pipeline))
-		if not result or not result[0]["total"]:
-			return [], 0
+		results = list(self.get_collection("data", "user_suggestions").aggregate(pipeline))
+		
+		levels = []
+		total_count = 0
+		
+		if results and results[0]["paginatedResults"]:
+			paginated_results = results[0]["paginatedResults"]
 			
-		return result[0]["data"], result[0]["total"][0]["count"]
+			# Get creator names
+			creator_ids = [level["creator"] for level in paginated_results if "creator" in level]
+			creators = self.get_creators(creator_ids)
+			
+			for level in paginated_results:
+				level_data = {
+					"level_id": level["level_id"],
+					"level_name": level["name"],
+					"creator_name": creators.get(level["creator"], {}).get("name", "Unknown") if "creator" in level else "Unknown",
+					"suggestion_count": level["suggestion_count"],
+					"latest_suggestion": level["latest_suggestion"]
+				}
+				levels.append(level_data)
+			
+			if results[0]["totalCount"]:
+				total_count = results[0]["totalCount"][0]["count"]
+		
+		return levels, total_count
 	
 	def get_weighted_suggestion_average(self, level_id: int) -> dict:
 		"""Calculate weighted average of user suggestions for a level"""
@@ -512,6 +541,25 @@ class SendDB:
 		
 		if not user_suggestions:
 			return {"difficulty": 0, "rating": 0, "suggestion_count": 0}
+		
+		# Check if the level has been rejected by any moderator
+		mod_ratings = self.get_mod_ratings(level_id)
+		rejection_count = sum(1 for r in mod_ratings if r.get("rejected", False))
+		total_mod_ratings = len(mod_ratings)
+		
+		# Include rejection information in the result
+		result = {
+			"suggestion_count": len(user_suggestions),
+			"mod_count": total_mod_ratings,
+			"rejection_count": rejection_count
+		}
+		
+		if rejection_count == total_mod_ratings and total_mod_ratings > 0:
+			# All moderators rejected this level
+			result["difficulty"] = 0
+			result["rating"] = 0
+			result["all_rejected"] = True
+			return result
 		
 		total_weight = 0
 		weighted_difficulty_sum = 0
@@ -524,13 +572,31 @@ class SendDB:
 			weighted_rating_sum += suggestion["rating"] * weight
 		
 		if total_weight == 0:
-			return {"difficulty": 0, "rating": 0, "suggestion_count": len(user_suggestions)}
+			result["difficulty"] = 0
+			result["rating"] = 0
+			return result
 		
-		return {
-			"difficulty": round(weighted_difficulty_sum / total_weight, 1),
-			"rating": round(weighted_rating_sum / total_weight, 1),
-			"suggestion_count": len(user_suggestions)
-		}
+		result["difficulty"] = round(weighted_difficulty_sum / total_weight, 1)
+		result["rating"] = round(weighted_rating_sum / total_weight, 1)
+		
+		return result
+	
+	def get_suggestion_score(self, level_id: int) -> float:
+		"""Calculate a suggestion score based on the combined weights of all suggesters for a level"""
+		suggestions = self.get_collection("data", "user_suggestions")
+		
+		# Get all user suggestions with their weights
+		user_suggestions = self.get_user_suggestions(level_id)
+		
+		if not user_suggestions:
+			return 0.0
+		
+		# Sum all weights to get a suggestion score
+		total_weight = sum(suggestion.get("weight", 1.0) for suggestion in user_suggestions)
+		
+		# Scale the score to make it more meaningful
+		# This gives levels with many high-weight users higher scores
+		return round(total_weight, 1)
 
 	# Moderator management methods
 	def add_moderator(self, discord_id: int, username: str) -> bool:
@@ -577,3 +643,56 @@ class SendDB:
 		"""Get all moderators"""
 		moderators = self.get_collection("data", "moderators")
 		return list(moderators.find().sort("username", 1))
+
+	def _update_user_weights_for_rejected(self, level_id: int):
+		"""Penalize users who suggested ratings for a level that was rejected by a moderator"""
+		suggestions = self.get_collection("data", "user_suggestions")
+		weights = self.get_collection("data", "user_weights")
+		
+		# Get all user suggestions for this level
+		user_suggestions = list(suggestions.find({"level_id": level_id, "processed_by_mod": True}))
+		
+		for suggestion in user_suggestions:
+			user_id = suggestion["user_id"]
+			
+			# Penalize users for suggesting rejected levels
+			# Give a 0.5 accuracy penalty (half of a normal suggestion's potential impact)
+			penalty = 0.5
+			
+			# Update the user's weight information
+			weights.update_one(
+				{"user_id": user_id},
+				{"$inc": {
+					"suggestion_count": 1,
+					"correct_suggestions": 0  # Zero credit for rejected level
+				}},
+				upsert=True
+			)
+			
+			# Recalculate the overall weight
+			weights.update_one(
+				{"user_id": user_id},
+				[
+					{
+						"$set": {
+							"accuracy": {
+								"$cond": {
+									"if": {"$gt": ["$suggestion_count", 0]},
+									"then": {"$divide": ["$correct_suggestions", "$suggestion_count"]},
+									"else": 0
+								}
+							}
+						}
+					},
+					{
+						"$set": {
+							"weight": {
+								"$add": [
+									0.5,  # Base weight
+									{"$multiply": [1.5, "$accuracy"]}  # Increases with accuracy up to 1.5 additional weight
+								]
+							}
+						}
+					}
+				]
+			)
