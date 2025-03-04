@@ -1063,6 +1063,7 @@ async def pending_suggestions(interaction: discord.Interaction):
 			self.current_level_id = None
 			
 		async def get_page_data(self) -> tuple[list[dict], int]:
+			# Only filter out levels this specific moderator has rated
 			return self.db.get_pending_suggestions(self.page, self.page_size, self.owner_id)
 			
 		def update_buttons(self, current_data):
@@ -1071,18 +1072,10 @@ async def pending_suggestions(interaction: discord.Interaction):
 			
 			# Only enable rating buttons if we have data
 			if current_data:
-				self.rate_1.disabled = False
-				self.rate_2.disabled = False
-				self.rate_3.disabled = False
-				self.rate_4.disabled = False
-				self.rate_5.disabled = False
+				self.rate_button.disabled = False
 				self.reject_button.disabled = False
 			else:
-				self.rate_1.disabled = True
-				self.rate_2.disabled = True
-				self.rate_3.disabled = True
-				self.rate_4.disabled = True
-				self.rate_5.disabled = True
+				self.rate_button.disabled = True
 				self.reject_button.disabled = True
 			
 		async def get_embed(self) -> discord.Embed:
@@ -1142,7 +1135,7 @@ async def pending_suggestions(interaction: discord.Interaction):
 					inline=True
 				)
 			
-			embed.set_footer(text="Choose a rating below or reject the level")
+			embed.set_footer(text="Choose to rate or reject the level")
 			return embed
 		
 		async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -1162,85 +1155,81 @@ async def pending_suggestions(interaction: discord.Interaction):
 			self.update_buttons(levels)
 			await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 		
-		async def process_rating(self, interaction: discord.Interaction, rating: int):
+		@discord.ui.button(label="Rate Level", style=discord.ButtonStyle.success, row=1)
+		async def rate_button(self, interaction: discord.Interaction, button: Button):
 			if not self.current_level_id:
 				await interaction.response.send_message("No level is currently selected.", ephemeral=True)
 				return
 			
-			# Get suggested difficulty from weighted average
+			# Get suggested values from weighted average
 			weighted_avg = self.db.get_weighted_suggestion_average(self.current_level_id)
-			suggested_difficulty = round(weighted_avg["difficulty"])
+			suggested_difficulty = round(weighted_avg["difficulty"]) if weighted_avg["difficulty"] > 0 else 5
+			suggested_rating = round(weighted_avg["rating"]) if weighted_avg["rating"] > 0 else 3
 			
-			# Create modal for difficulty input
-			class DifficultyModal(discord.ui.Modal, title=f"Set Difficulty"):
+			# Create modal for both difficulty and rating inputs
+			class RatingModal(discord.ui.Modal, title=f"Rate Level"):
 				difficulty = discord.ui.TextInput(
 					label="Difficulty (1-10)",
 					placeholder="Enter a number from 1 to 10",
-					default=str(suggested_difficulty) if suggested_difficulty > 0 else "5",
+					default=str(suggested_difficulty),
 					required=True,
 					min_length=1,
 					max_length=2
 				)
 				
+				rating = discord.ui.TextInput(
+					label="Rating (1-5)",
+					placeholder="Enter a number from 1 to 5",
+					default=str(suggested_rating),
+					required=True,
+					min_length=1,
+					max_length=1
+				)
+				
 				async def on_submit(self, interaction: discord.Interaction):
 					try:
 						difficulty_val = int(self.difficulty.value)
+						rating_val = int(self.rating.value)
 						
 						if not (1 <= difficulty_val <= 10):
 							await interaction.response.send_message("Invalid value. Difficulty must be 1-10.", ephemeral=True)
 							return
+							
+						if not (1 <= rating_val <= 5):
+							await interaction.response.send_message("Invalid value. Rating must be 1-5.", ephemeral=True)
+							return
 						
 						# Store the moderator's rating with both difficulty and quality rating
-						db.add_mod_rating(interaction.user.id, self.current_level_id, difficulty_val, rating)
+						self.outer_view.db.add_mod_rating(interaction.user.id, self.outer_view.current_level_id, difficulty_val, rating_val)
 						
 						await interaction.response.send_message(
-							f"Your rating has been recorded:\n**Difficulty:** {difficulty_val}/10\n**Rating:** {rating}/5",
+							f"Your rating has been recorded:\n**Difficulty:** {difficulty_val}/10\n**Rating:** {rating_val}/5",
 							ephemeral=True
 						)
 						
 						# Continue to next level
-						self.page += 1
-						levels, _ = await self.get_page_data()
-						self.update_buttons(levels)
-						await self.message.edit(embed=await self.get_embed(), view=self)
+						self.outer_view.page += 1
+						levels, _ = await self.outer_view.get_page_data()
+						self.outer_view.update_buttons(levels)
+						await self.outer_view.message.edit(embed=await self.outer_view.get_embed(), view=self.outer_view)
 						
 					except ValueError:
-						await interaction.response.send_message("Please enter a valid number for difficulty.", ephemeral=True)
+						await interaction.response.send_message("Please enter valid numbers for difficulty and rating.", ephemeral=True)
 			
 			# Set reference to the parent view
-			modal = DifficultyModal()
+			modal = RatingModal()
 			modal.outer_view = self
 			
 			await interaction.response.send_modal(modal)
 		
-		@discord.ui.button(label="⭐", style=discord.ButtonStyle.secondary, row=1)
-		async def rate_1(self, interaction: discord.Interaction, button: Button):
-			await self.process_rating(interaction, 1)
-		
-		@discord.ui.button(label="⭐⭐", style=discord.ButtonStyle.secondary, row=1)
-		async def rate_2(self, interaction: discord.Interaction, button: Button):
-			await self.process_rating(interaction, 2)
-		
-		@discord.ui.button(label="⭐⭐⭐", style=discord.ButtonStyle.success, row=1)
-		async def rate_3(self, interaction: discord.Interaction, button: Button):
-			await self.process_rating(interaction, 3)
-		
-		@discord.ui.button(label="⭐⭐⭐⭐", style=discord.ButtonStyle.success, row=1)
-		async def rate_4(self, interaction: discord.Interaction, button: Button):
-			await self.process_rating(interaction, 4)
-		
-		@discord.ui.button(label="⭐⭐⭐⭐⭐", style=discord.ButtonStyle.success, row=1)
-		async def rate_5(self, interaction: discord.Interaction, button: Button):
-			await self.process_rating(interaction, 5)
-		
-		@discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, row=2)
+		@discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, row=1)
 		async def reject_button(self, interaction: discord.Interaction, button: Button):
 			if not self.current_level_id:
 				await interaction.response.send_message("No level is currently selected.", ephemeral=True)
 				return
 				
 			# Store the moderator's rejection
-			db.add_mod_rating(interaction.user.id, self.current_level_id, rejected=True)
+			self.db.add_mod_rating(interaction.user.id, self.current_level_id, rejected=True)
 			
 			await interaction.response.send_message(
 				f"You've rejected level {self.current_level_id}. Users who suggested it will have their accuracy negatively impacted.",

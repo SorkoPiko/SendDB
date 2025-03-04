@@ -359,13 +359,6 @@ class SendDB:
 			upsert=True
 		)
 		
-		# Mark all user suggestions for this level as processed
-		suggestions = self.get_collection("data", "user_suggestions")
-		suggestions.update_many(
-			{"level_id": level_id, "processed_by_mod": False},
-			{"$set": {"processed_by_mod": True}}
-		)
-		
 		# Update user weights based on how close their suggestions were
 		if rejected:
 			self._update_user_weights_for_rejected(level_id)
