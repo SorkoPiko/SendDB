@@ -1,12 +1,13 @@
 import asyncio, math
-
+import logging
+import sys
 from dotenv import load_dotenv
 from os import environ
 import discord, os, json, re, git
 from discord.ext import commands, tasks
 from discord.ui import Button, View
 from discord import app_commands
-from datetime import datetime, UTC
+from datetime import datetime, timezone, timedelta, UTC
 from math import ceil
 from enum import Enum
 from typing import Literal
@@ -18,6 +19,25 @@ load_dotenv()
 db = SendDB(f"mongodb+srv://{environ.get('MONGO_USERNAME')}:{environ.get('MONGO_PASSWORD')}@{environ.get('MONGO_ENDPOINT')}")
 
 OLDEST_LEVEL = int(environ.get("OLDEST_LEVEL"))
+DIFFICULTIES = {
+	1: "Auto (1⭐)",
+	2: "Easy (2⭐)",
+	3: "Normal (3⭐)",
+	4: "Hard (4⭐)",
+	5: "Hard (5⭐)",
+	6: "Harder (6⭐)",
+	7: "Harder (7⭐)",
+	8: "Insane (8⭐)",
+	9: "Insane (9⭐)",
+	10: "Demon (10⭐)"
+}
+RATINGS = {
+	1: "Rate",
+	2: "Feature",
+	3: "Epic",
+	4: "Legendary",
+	5: "Mythic"
+}
 
 # Custom check for moderator permissions
 async def is_moderator(interaction: discord.Interaction) -> bool:
@@ -730,8 +750,8 @@ class ModReviewView(View):
 			# Add weighted average information
 			embed.add_field(
 				name="Weighted Suggestion Average",
-				value=f"**Difficulty:** {weighted_avg['difficulty']}/10\n"
-					  f"**Rating:** {weighted_avg['rating']}/5",
+				value=f"**Difficulty:** {weighted_avg['difficulty']}/10 ({DIFFICULTIES[weighted_avg['difficulty']]})\n"
+					  f"**Rating:** {weighted_avg['rating']}/5 ({RATINGS[weighted_avg['rating']]})",
 				inline=False
 			)
 			
@@ -769,8 +789,8 @@ class ModReviewView(View):
 			# Create modal for both difficulty and rating inputs
 			class RatingModal(discord.ui.Modal, title=f"Rate Level"):
 				difficulty = discord.ui.TextInput(
-					label="Difficulty (1-10)",
-					placeholder="Enter a number from 1 to 10",
+					label="Difficulty from 1 (Auto) to 10 (Demon)",
+					placeholder="Enter a star value from 1 (Auto) to 10 (Demon)",
 					default=str(suggested_difficulty),
 					required=True,
 					min_length=1,
@@ -778,8 +798,8 @@ class ModReviewView(View):
 				)
 				
 				rating = discord.ui.TextInput(
-					label="Rating (1-5)",
-					placeholder="Enter a number from 1 to 5",
+					label="Rating from 1 (Rate) to 5 (Mythic)",
+					placeholder="Enter a number from 1 (Rate) to 5 (Mythic)",
 					default=str(suggested_rating),
 					required=True,
 					min_length=1,
@@ -803,7 +823,7 @@ class ModReviewView(View):
 						self.outer_view.db.add_mod_rating(interaction.user.id, self.outer_view.current_level_id, difficulty_val, rating_val)
 						
 						await interaction.response.send_message(
-							f"Your rating has been recorded:\n**Difficulty:** {difficulty_val}/10\n**Rating:** {rating_val}/5",
+							f"Your rating has been recorded:\n**Difficulty:** {DIFFICULTIES[difficulty_val]}\n**Rating:** {RATINGS[rating_val]}",
 							ephemeral=True
 						)
 						
@@ -1043,8 +1063,8 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 		embed.add_field(
 			name="User Suggestions",
 			value=f"**Count:** {suggestion_data['suggestion_count']}\n"
-				  f"**Avg Difficulty:** {suggestion_data['difficulty']}/10\n"
-				  f"**Avg Rating:** {suggestion_data['rating']}/5",
+				  f"**Avg Difficulty:** {suggestion_data['difficulty']}/10 ({DIFFICULTIES[suggestion_data['difficulty']]})\n"
+				  f"**Avg Rating:** {suggestion_data['rating']}/5 ({RATINGS[suggestion_data['rating']]})",
 			inline=True
 		)
 	
@@ -1062,8 +1082,8 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 			rating_text = f"**Count:** {len(mod_ratings)} ({rejected_count} rejections)\n"
 			
 			if approved_ratings:
-				rating_text += f"**Avg Difficulty:** {avg_difficulty:.1f}/10\n" \
-							  f"**Avg Rating:** {avg_rating:.1f}/5"
+				rating_text += f"**Avg Difficulty:** {avg_difficulty:.1f}/10 ({DIFFICULTIES[avg_difficulty]})\n" \
+							  f"**Avg Rating:** {avg_rating:.1f}/5 ({RATINGS[avg_rating]})"
 			
 			if rejected_count > 0:
 				rating_text += f"\n**Note:** {rejected_count} moderator{'s' if rejected_count == 1 else 's'} rejected this level"
@@ -1122,8 +1142,8 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 						
 						await interaction.response.send_message(
 							f"Your suggestion for **{levelData['name']}** has been recorded.\n\n"
-							f"**Difficulty:** {difficulty_val}/10\n"
-							f"**Rating:** {rating_val}/5\n\n"
+							f"**Difficulty:** {DIFFICULTIES[difficulty_val]}\n"
+							f"**Rating:** {RATINGS[rating_val]}\n\n"
 							f"Your suggestion weight: **{weight_info['weight']:.2f}**",
 							ephemeral=True
 						)
@@ -1183,17 +1203,24 @@ Support Server: [SendDB](https://discord.gg/{invite})
 @client.tree.command(name="suggest", description="Suggest a difficulty and rating for a level")
 @app_commands.describe(
 	level_id="The level's ID",
-	difficulty="Difficulty from 1-10",
-	rating="Rating from 1-5 (quality of the level)"
+	difficulty="The difficulty level of the level",
+	rating="Quality rating for the level"
 )
 async def suggest_level(
 	interaction: discord.Interaction, 
 	level_id: int, 
-	difficulty: app_commands.Range[int, 1, 10], 
-	rating: app_commands.Range[int, 1, 5]
+	difficulty: Literal["Auto (1⭐)", "Easy (2⭐)", "Normal (3⭐)", "Hard (4⭐)", "Hard (5⭐)", 
+                     "Harder (6⭐)", "Harder (7⭐)", "Insane (8⭐)", "Insane (9⭐)", "Demon (10⭐)"],
+	rating: Literal["Rate", "Feature", "Epic", "Legendary", "Mythic"]
 ):
+	# Convert difficulty string to numeric value
+	difficulty_value = next((k for k, v in DIFFICULTIES.items() if v == difficulty), 5)
+	
+	# Convert rating string to numeric value
+	rating_value = next((k for k, v in RATINGS.items() if v == rating), 1)
+	
 	# Store the user's suggestion
-	db.add_user_suggestion(interaction.user.id, level_id, difficulty, rating)
+	db.add_user_suggestion(interaction.user.id, level_id, difficulty_value, rating_value)
 	
 	# Get info about the level
 	infoData = db.get_info([level_id])
@@ -1217,8 +1244,8 @@ async def suggest_level(
 	embed = discord.Embed(
 		title=f"Suggestion Recorded",
 		description=f"Your suggestion for **{level_name}** by **{creator_name}** has been recorded:\n\n"
-				   f"**Difficulty:** {difficulty}/10\n"
-				   f"**Rating:** {rating}/5\n\n"
+				   f"**Difficulty:** {difficulty}\n"
+				   f"**Rating:** {rating}\n\n"
 				   f"Your suggestion weight: **{weight_info['weight']:.2f}**\n"
 				   f"Your accuracy score: **{weight_info['accuracy'] * 100:.1f}%**\n"
 				   f"Total suggestions: **{weight_info['suggestion_count']}**",
@@ -1274,8 +1301,8 @@ async def my_suggestions(interaction: discord.Interaction):
 			
 			embed.add_field(
 				name=f"Suggestion #{i+1}: {level_name}",
-				value=f"**Difficulty:** {s['difficulty']}/10\n"
-					  f"**Rating:** {s['rating']}/5\n"
+				value=f"**Difficulty:** {DIFFICULTIES[s['difficulty']]}\n"
+					  f"**Rating:** {RATINGS[s['rating']]}\n"
 					  f"**Processed:** {processed}\n"
 					  f"**When:** <t:{int(s['timestamp'].timestamp())}:R>",
 				inline=True
