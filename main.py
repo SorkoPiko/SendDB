@@ -1310,29 +1310,4 @@ async def my_suggestions(interaction: discord.Interaction):
 	
 	await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
-@client.tree.command(name="moderator", description="Add or remove moderators")
-@app_commands.describe(
-    action="Whether to add or remove a moderator",
-    user="The user to add/remove as moderator"
-)
-@app_commands.choices(action=[
-    app_commands.Choice(name="add", value="add"),
-    app_commands.Choice(name="remove", value="remove")
-])
-async def moderator(interaction: discord.Interaction, action: str, user: discord.User):
-    if action == "add":
-        success = db.add_moderator(user.id, user.name)
-        if success:
-            await interaction.response.send_message(f"✅ Added {user.mention} as a moderator", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Failed to add moderator", ephemeral=True)
-    else:
-        success = db.remove_moderator(user.id)
-        if success:
-            await interaction.response.send_message(f"✅ Removed {user.mention} as a moderator", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Failed to remove moderator", ephemeral=True)
-
-
 client.run(environ.get("BOT_TOKEN"))
