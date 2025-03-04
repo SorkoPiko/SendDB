@@ -657,8 +657,6 @@ class RatingModal(Modal, title="Rate Level"):
 	def __init__(self, suggestion_id: str):
 		super().__init__()
 		self.suggestion_id = suggestion_id
-		self.difficulty = None
-		self.rating = None
 
 	difficulty = TextInput(
 		label="Difficulty (1-10)",
@@ -678,32 +676,44 @@ class RatingModal(Modal, title="Rate Level"):
 
 	async def on_submit(self, interaction: discord.Interaction):
 		try:
-			self.difficulty = int(self.difficulty.value)
-			self.rating = int(self.rating.value)
+			difficulty = int(self.difficulty.value)
+			rating = int(self.rating.value)
+
+			if not (1 <= difficulty <= 10 and 1 <= rating <= 5):
+				raise ValueError("Invalid rating values")
+
+			db.moderate_suggestion(self.suggestion_id, interaction.user.id, True, difficulty, rating)
 			
-			if not (1 <= self.difficulty <= 10 and 1 <= self.rating <= 5):
-				raise ValueError()
-				
-			await interaction.response.send_message("✅ Ratings recorded", ephemeral=True)
-		except ValueError:
-			self.difficulty = None
-			self.rating = None
-			await interaction.response.send_message("❌ Invalid ratings. Please use numbers within the correct ranges.", ephemeral=True)
+			# Get the view and update it
+			view = [item for item in interaction.message.components if isinstance(item, ReviewQueueView)][0]
+			await interaction.response.edit_message(embed=await view.get_embed(), view=view)
+
+		except (ValueError, TypeError):
+			await interaction.response.send_message(
+				"❌ Invalid input. Difficulty must be 1-10 and rating must be 1-5.",
+				ephemeral=True
+			)
 
 class ReviewQueueView(View):
-	def __init__(self, db: SendDB, user_id: int, page_size: int = 10):
+	def __init__(self, db: SendDB, user_id: int):
 		super().__init__(timeout=180)
 		self.db = db
 		self.user_id = user_id
 		self.is_moderator = self.db.is_moderator(self.user_id)
-		self.page_size = page_size
 		self.current_page = 0
 		self.total_count = 0
 		self.max_pages = 1
 
 	async def get_page_data(self) -> tuple[list[dict], int]:
-		skip = self.current_page * self.page_size
-		return self.db.get_pending_suggestions(None, skip, self.page_size, True, self.user_id if self.is_moderator else None)
+		# Get one suggestion at a time
+		suggestions, total = self.db.get_pending_suggestions(
+			None, 
+			self.current_page, 
+			1,  # Only get one suggestion
+			True, 
+			self.user_id if self.is_moderator else None
+		)
+		return suggestions[0] if suggestions else None, total
 
 	def update_buttons(self):
 		self.prev_button.disabled = self.current_page == 0
@@ -714,22 +724,20 @@ class ReviewQueueView(View):
 		self.not_sent_button.disabled = not self.is_moderator
 
 	async def get_embed(self) -> discord.Embed:
-		page_data, self.total_count = await self.get_page_data()
-		self.max_pages = ceil(self.total_count / self.page_size)
+		suggestion, self.total_count = await self.get_page_data()
+		self.max_pages = self.total_count
 
 		embed = discord.Embed(
 			title="📋 Review Queue",
-			description="Pending level suggestions sorted by suggester score",
+			description="Review level suggestions one at a time",
 			color=0x00ff00
 		)
 
-		start_idx = self.current_page * self.page_size
-
-		for idx, suggestion in enumerate(page_data, start=start_idx + 1):
+		if suggestion:
 			user = await client.fetch_user(suggestion["userID"])
 			
 			embed.add_field(
-				name=f"#{idx}. {suggestion['level_name']} ({suggestion['levelID']})",
+				name=f"{suggestion['level_name']} ({suggestion['levelID']})",
 				value=f"By **{suggestion['creator_name']}**\n"
 					f"Suggested by: **{user.name}** (Score: {suggestion['weighted_score']:.1f}%)\n"
 					f"Difficulty: **{suggestion['difficulty']}/10**\n"
@@ -737,21 +745,20 @@ class ReviewQueueView(View):
 					f"ID: `{suggestion['_id']}`",
 				inline=False
 			)
-
-		if not page_data:
+		else:
 			if self.is_moderator:
 				embed.description = "No more suggestions to review!"
 			else:
 				embed.description = "No pending suggestions in queue."
 
-		embed.set_footer(text=f"Page {self.current_page + 1}/{self.max_pages} • Total Suggestions: {self.total_count}")
+		embed.set_footer(text=f"Suggestion {self.current_page + 1}/{self.total_count} • Total Suggestions: {self.total_count}")
 		return embed
 
 	async def interaction_check(self, interaction: discord.Interaction) -> bool:
 		return interaction.user.id == self.user_id
 
-	@discord.ui.button(label="Top", style=discord.ButtonStyle.primary, emoji="⬆️")
-	async def top_button(self, interaction: discord.Interaction, button: Button):
+	@discord.ui.button(label="First", style=discord.ButtonStyle.primary, emoji="⏮️")
+	async def first_button(self, interaction: discord.Interaction, button: Button):
 		self.current_page = 0
 		self.update_buttons()
 		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
@@ -768,25 +775,26 @@ class ReviewQueueView(View):
 		self.update_buttons()
 		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
+	@discord.ui.button(label="Last", style=discord.ButtonStyle.primary, emoji="⏭️")
+	async def last_button(self, interaction: discord.Interaction, button: Button):
+		self.current_page = self.max_pages - 1
+		self.update_buttons()
+		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+
 	@discord.ui.button(label="Sent ✅", style=discord.ButtonStyle.success)
 	async def sent_button(self, interaction: discord.Interaction, button: Button):
 		if not self.is_moderator:
 			await interaction.response.send_message("❌ You are not a moderator", ephemeral=True)
 			return
 
-		page_data, _ = await self.get_page_data()
-		if not page_data:
+		suggestion, _ = await self.get_page_data()
+		if not suggestion:
 			await interaction.response.send_message("❌ No suggestions to review", ephemeral=True)
 			return
 
-		suggestion = page_data[0]  # Get the first suggestion on the current page
 		modal = RatingModal(suggestion["_id"])
 		await interaction.response.send_modal(modal)
 		await modal.wait()
-
-		if modal.difficulty is not None and modal.rating is not None:
-			self.db.moderate_suggestion(suggestion["_id"], self.user_id, True, modal.difficulty, modal.rating)
-			await interaction.edit_original_response(embed=await self.get_embed(), view=self)
 
 	@discord.ui.button(label="Not Sent ❌", style=discord.ButtonStyle.danger)
 	async def not_sent_button(self, interaction: discord.Interaction, button: Button):
@@ -794,12 +802,11 @@ class ReviewQueueView(View):
 			await interaction.response.send_message("❌ You are not a moderator", ephemeral=True)
 			return
 
-		page_data, _ = await self.get_page_data()
-		if not page_data:
+		suggestion, _ = await self.get_page_data()
+		if not suggestion:
 			await interaction.response.send_message("❌ No suggestions to review", ephemeral=True)
 			return
 
-		suggestion = page_data[0]  # Get the first suggestion on the current page
 		self.db.moderate_suggestion(suggestion["_id"], self.user_id, False)
 		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
