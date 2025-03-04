@@ -421,17 +421,31 @@ class SendDB:
 			# Average the normalized differences and convert to accuracy (0-1)
 			accuracy = 1 - ((difficulty_diff + rating_diff) / 2)
 			
+			# Apply asymmetric weighting:
+			# - Accurate suggestions (>0.7) get full credit
+			# - Moderately accurate suggestions (0.4-0.7) get slightly reduced credit
+			# - Inaccurate suggestions (<0.4) are penalized more heavily
+			weighted_accuracy = accuracy
+			if accuracy < 0.4:
+				# For very inaccurate suggestions, apply a stronger penalty
+				# This makes a bad suggestion worth less than its raw accuracy
+				weighted_accuracy = accuracy * 0.5  # Reduce value by 50%
+			elif accuracy < 0.7:
+				# For moderately accurate suggestions, apply a small penalty
+				weighted_accuracy = accuracy * 0.8  # Reduce value by 20%
+			
 			# Update the user's weight information
 			weights.update_one(
 				{"user_id": user_id},
 				{"$inc": {
 					"suggestion_count": 1,
-					"correct_suggestions": accuracy
+					"correct_suggestions": weighted_accuracy
 				}},
 				upsert=True
 			)
 			
-			# Recalculate the overall weight
+			# Recalculate the overall weight using a gradual growth formula
+			# that rewards long-term participation with accurate suggestions
 			weights.update_one(
 				{"user_id": user_id},
 				[
@@ -450,8 +464,19 @@ class SendDB:
 						"$set": {
 							"weight": {
 								"$add": [
-									0.5,  # Base weight
-									{"$multiply": [1.5, "$accuracy"]}  # Increases with accuracy up to 1.5 additional weight
+									1.0,  # Base weight (minimum)
+									{
+										"$multiply": [
+											9.0,  # Maximum bonus weight (making max total 10.0)
+											"$accuracy",
+											{
+												"$divide": [
+													"$suggestion_count",
+													{"$add": ["$suggestion_count", 20]}  # Damping factor
+												]
+											}
+										]
+									}
 								]
 							}
 						}
@@ -667,21 +692,22 @@ class SendDB:
 		for suggestion in user_suggestions:
 			user_id = suggestion["user_id"]
 			
-			# Penalize users for suggesting rejected levels
-			# Give a 0.5 accuracy penalty (half of a normal suggestion's potential impact)
-			penalty = 0.5
+			# Apply a stronger penalty for rejected levels
+			# Instead of just adding 0 to correct_suggestions (which would be neutral),
+			# we'll actually subtract from their total correct_suggestions as a penalty
+			penalty = -0.5  # This effectively counts as NEGATIVE half a suggestion
 			
 			# Update the user's weight information
 			weights.update_one(
 				{"user_id": user_id},
 				{"$inc": {
 					"suggestion_count": 1,
-					"correct_suggestions": 0  # Zero credit for rejected level
+					"correct_suggestions": penalty  # Apply negative points for suggesting rejected levels
 				}},
 				upsert=True
 			)
 			
-			# Recalculate the overall weight
+			# Recalculate the overall weight using the same gradual growth formula
 			weights.update_one(
 				{"user_id": user_id},
 				[
@@ -700,8 +726,19 @@ class SendDB:
 						"$set": {
 							"weight": {
 								"$add": [
-									0.5,  # Base weight
-									{"$multiply": [1.5, "$accuracy"]}  # Increases with accuracy up to 1.5 additional weight
+									1.0,  # Base weight (minimum)
+									{
+										"$multiply": [
+											9.0,  # Maximum bonus weight (making max total 10.0)
+											"$accuracy",
+											{
+												"$divide": [
+													"$suggestion_count",
+													{"$add": ["$suggestion_count", 20]}  # Damping factor
+												]
+											}
+										]
+									}
 								]
 							}
 						}
