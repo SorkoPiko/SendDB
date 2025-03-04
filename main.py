@@ -1167,7 +1167,7 @@ Total Sends: `{total_sends}`
 Total Creators: `{total_creators}`
 Total Levels: `{total_levels}`
 Total Servers: `{len(client.guilds)}`
-Total Members: `{sum(g.member_count for g in client.guilds)}`
+Total Members: `{sum(g.member_count or 0 for g in client.guilds)}`
 Oldest Level: **{oldest_level["name"]}** ([GDBrowser](https://gdbrowser.com/{oldest_level["_id"]}))
 Oldest Creator: **{oldest_creator["name"]}** ([GDBrowser](https://gdbrowser.com/u/{oldest_creator['accountID']}))
 Latest Send: <t:{int(latest_send['timestamp'].timestamp())}:F> (<t:{int(latest_send['timestamp'].timestamp())}:R>)
