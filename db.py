@@ -359,6 +359,13 @@ class SendDB:
 			upsert=True
 		)
 		
+		# Mark suggestions for this level as processed by this moderator
+		suggestions = self.get_collection("data", "user_suggestions")
+		suggestions.update_many(
+			{"level_id": level_id},
+			{"$set": {"processed_by_mod": True}}
+		)
+		
 		# Update user weights based on how close their suggestions were
 		if rejected:
 			self._update_user_weights_for_rejected(level_id)
@@ -397,8 +404,8 @@ class SendDB:
 		suggestions = self.get_collection("data", "user_suggestions")
 		weights = self.get_collection("data", "user_weights")
 		
-		# Get all user suggestions for this level
-		user_suggestions = list(suggestions.find({"level_id": level_id, "processed_by_mod": True}))
+		# Get all user suggestions for this level (no longer filtering by processed_by_mod)
+		user_suggestions = list(suggestions.find({"level_id": level_id}))
 		
 		for suggestion in user_suggestions:
 			user_id = suggestion["user_id"]
@@ -654,8 +661,8 @@ class SendDB:
 		suggestions = self.get_collection("data", "user_suggestions")
 		weights = self.get_collection("data", "user_weights")
 		
-		# Get all user suggestions for this level
-		user_suggestions = list(suggestions.find({"level_id": level_id, "processed_by_mod": True}))
+		# Get all user suggestions for this level (no longer filtering by processed_by_mod)
+		user_suggestions = list(suggestions.find({"level_id": level_id}))
 		
 		for suggestion in user_suggestions:
 			user_id = suggestion["user_id"]

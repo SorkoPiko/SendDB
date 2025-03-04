@@ -1106,34 +1106,22 @@ async def pending_suggestions(interaction: discord.Interaction):
 				color=0x00aaff
 			)
 			
+			# Add suggestion summary information
+			embed.add_field(
+				name="Suggestion Summary",
+				value=f"**Total Suggestions:** {level['suggestion_count']}\n"
+					  f"**Suggestion Score:** {suggestion_score}\n"
+					  f"**Latest Suggestion:** <t:{int(level['latest_suggestion'].timestamp())}:R>",
+				inline=False
+			)
+			
 			# Add weighted average information
 			embed.add_field(
 				name="Weighted Suggestion Average",
 				value=f"**Difficulty:** {weighted_avg['difficulty']}/10\n"
-					  f"**Rating:** {weighted_avg['rating']}/5\n"
-					  f"**Suggestion Score:** {suggestion_score}",
+					  f"**Rating:** {weighted_avg['rating']}/5",
 				inline=False
 			)
-			
-			# Sort suggestions by weight (descending)
-			suggestions.sort(key=lambda s: s.get("weight", 1.0), reverse=True)
-			
-			# Add top 5 user suggestions
-			for i, s in enumerate(suggestions[:5]):
-				try:
-					user_obj = await client.fetch_user(s["user_id"])
-					user_name = user_obj.display_name if user_obj else f"User {s['user_id']}"
-				except:
-					user_name = f"User {s['user_id']}"
-				
-				embed.add_field(
-					name=f"Suggestion #{i+1} by {user_name}",
-					value=f"**Difficulty:** {s['difficulty']}/10\n"
-						  f"**Rating:** {s['rating']}/5\n"
-						  f"**Weight:** {s.get('weight', 1.0):.2f}\n"
-						  f"**Accuracy:** {s.get('accuracy', 0.0) * 100:.1f}%",
-					inline=True
-				)
 			
 			embed.set_footer(text="Choose to rate or reject the level")
 			return embed
