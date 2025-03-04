@@ -454,7 +454,8 @@ class SendDB:
 	
 	def get_pending_suggestions(self, page: int = 0, page_size: int = 10, mod_id: Optional[int] = None):
 		"""
-		Retrieves a paginated list of levels that have user suggestions but haven't been fully reviewed by moderators.
+		Retrieves a paginated list of levels that have user suggestions but haven't been reviewed
+		by the specified moderator.
 		
 		Args:
 			page: Page number (0-indexed)
@@ -464,29 +465,28 @@ class SendDB:
 		Returns:
 			tuple: (list of level dicts, total count)
 		"""
-		match_filter = {}
+		# Collection references
+		suggestions = self.get_collection("data", "user_suggestions")
 		
 		# If mod_id is provided, filter out levels this moderator has already rated
+		already_rated = []
 		if mod_id is not None:
-			# Get all level IDs that this moderator has already rated
-			already_rated = []
 			mod_ratings = self.get_collection("data", "mod_ratings").find({"mod_id": mod_id})
 			for rating in mod_ratings:
 				already_rated.append(rating["level_id"])
-			
-			if already_rated:
-				match_filter["level_id"] = {"$nin": already_rated}
 		
-		# Get levels with suggestions that need review
+		# Base match criteria - get unique level IDs with suggestions
+		match_filter = {}
+		if already_rated:
+			match_filter["level_id"] = {"$nin": already_rated}
+		
+		# Get distinct level IDs with suggestions
 		pipeline = [
-			{"$match": {"suggestions": {"$exists": True, "$ne": []}}},
 			{"$match": match_filter},
-			{"$project": {
-				"level_id": 1, 
-				"name": 1, 
-				"creator": 1,
-				"suggestion_count": {"$size": "$suggestions"},
-				"latest_suggestion": {"$max": "$suggestions.timestamp"}
+			{"$group": {
+				"_id": "$level_id",
+				"suggestion_count": {"$sum": 1},
+				"latest_suggestion": {"$max": "$timestamp"}
 			}},
 			{"$sort": {"latest_suggestion": -1}},
 			{"$facet": {
@@ -498,26 +498,38 @@ class SendDB:
 			}}
 		]
 		
-		results = list(self.get_collection("data", "user_suggestions").aggregate(pipeline))
+		results = list(suggestions.aggregate(pipeline))
 		
 		levels = []
 		total_count = 0
 		
 		if results and results[0]["paginatedResults"]:
 			paginated_results = results[0]["paginatedResults"]
+			level_ids = [result["_id"] for result in paginated_results]
 			
-			# Get creator names
-			creator_ids = [level["creator"] for level in paginated_results if "creator" in level]
+			# Get level info
+			level_info = self.get_info(level_ids)
+			
+			# Get creator info for these levels
+			creator_ids = [info["creator"] for lid, info in level_info.items() if "creator" in info]
 			creators = self.get_creators(creator_ids)
 			
-			for level in paginated_results:
+			for result in paginated_results:
+				level_id = result["_id"]
 				level_data = {
-					"level_id": level["level_id"],
-					"level_name": level["name"],
-					"creator_name": creators.get(level["creator"], {}).get("name", "Unknown") if "creator" in level else "Unknown",
-					"suggestion_count": level["suggestion_count"],
-					"latest_suggestion": level["latest_suggestion"]
+					"level_id": level_id,
+					"level_name": level_info.get(level_id, {}).get("name", f"Level {level_id}"),
+					"creator_name": "Unknown",
+					"suggestion_count": result["suggestion_count"],
+					"latest_suggestion": result["latest_suggestion"]
 				}
+				
+				# Add creator info if available
+				if level_id in level_info and "creator" in level_info[level_id]:
+					creator_id = level_info[level_id]["creator"]
+					if creator_id in creators:
+						level_data["creator_name"] = creators[creator_id].get("name", "Unknown")
+				
 				levels.append(level_data)
 			
 			if results[0]["totalCount"]:
