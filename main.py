@@ -1321,7 +1321,6 @@ client.run(environ.get("BOT_TOKEN"))
     app_commands.Choice(name="add", value="add"),
     app_commands.Choice(name="remove", value="remove")
 ])
-@commands.has_permissions(manage_channels=True)
 async def moderator(interaction: discord.Interaction, action: str, user: discord.User):
     if action == "add":
         success = db.add_moderator(user.id, user.name)
