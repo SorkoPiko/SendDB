@@ -337,7 +337,7 @@ class SendDB:
                                 "timestamp": 1,
                                 "weighted_score": 1,
                                 "level_name": {"$ifNull": [{"$first": "$level_info.name"}, "Unknown"]},
-                                "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, null]}
+                                "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, None]}
                             }
                         },
                         {"$sort": {"weighted_score": -1, "timestamp": 1}},
@@ -382,7 +382,7 @@ class SendDB:
                         "timestamp": 1,
                         "weighted_score": 1,
                         "level_name": {"$ifNull": [{"$first": "$level_info.name"}, "Unknown"]},
-                        "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, null]}
+                        "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, None]}
                     }
                 },
                 {"$sort": {"weighted_score": -1, "timestamp": 1}},
@@ -462,7 +462,7 @@ class SendDB:
                                 "timestamp": 1,
                                 "status": 1,
                                 "level_name": {"$ifNull": [{"$first": "$level_info.name"}, "Unknown"]},
-                                "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, null]}
+                                "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, None]}
                             }
                         },
                         {"$sort": {"timestamp": -1}},
@@ -498,7 +498,7 @@ class SendDB:
                         "timestamp": 1,
                         "status": 1,
                         "level_name": {"$ifNull": [{"$first": "$level_info.name"}, "Unknown"]},
-                        "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, null]}
+                        "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, None]}
                     }
                 },
                 {"$sort": {"timestamp": -1}},
