@@ -18,6 +18,25 @@ load_dotenv()
 db = SendDB(f"mongodb+srv://{environ.get('MONGO_USERNAME')}:{environ.get('MONGO_PASSWORD')}@{environ.get('MONGO_ENDPOINT')}")
 
 OLDEST_LEVEL = int(environ.get("OLDEST_LEVEL"))
+DIFFICULTIES = {
+	1: "Auto",
+	2: "Easy",
+	3: "Normal",
+	4: "Hard",
+	5: "Hard",
+	6: "Harder",
+	7: "Harder",
+	8: "Insane",
+	9: "Insane",
+	10: "Demon"
+}
+RATINGS = {
+	1: "Rate",
+	2: "Feature",
+	3: "Epic",
+	4: "Legendary",
+	5: "Mythic"
+}
 
 def get_git_info():
 	repo = git.Repo(search_parent_directories=True)
@@ -734,15 +753,17 @@ class ReviewQueueView(View):
 		)
 
 		if suggestion:
-			user = await client.fetch_user(suggestion["userID"])
+			# Get difficulty and rating names
+			difficulty_name = DIFFICULTIES.get(round(suggestion["difficulty"]), "Unknown")
+			rating_name = RATINGS.get(round(suggestion["rating"]), "Unknown")
 			
 			embed.add_field(
 				name=f"{suggestion['level_name']} ({suggestion['levelID']})",
 				value=f"By **{suggestion['creator_name']}**\n"
-					f"Suggested by: **{user.name}** (Score: {suggestion['weighted_score']:.1f}%)\n"
-					f"Difficulty: **{suggestion['difficulty']}/10**\n"
-					f"Rating: **{suggestion['rating']}/5**\n"
-					f"ID: `{suggestion['_id']}`",
+					f"Suggested by **{suggestion['suggestion_count']}** users\n"
+					f"Combined Score: **{suggestion['total_weight']:.1f}%**\n"
+					f"Weighted Difficulty: **{suggestion['difficulty']:.1f}/10** ({difficulty_name})\n"
+					f"Weighted Rating: **{suggestion['rating']:.1f}/5** ({rating_name})",
 				inline=False
 			)
 		else:
@@ -751,7 +772,7 @@ class ReviewQueueView(View):
 			else:
 				embed.description = "No pending suggestions in queue."
 
-		embed.set_footer(text=f"Suggestion {self.current_page + 1}/{self.total_count} • Total Suggestions: {self.total_count}")
+		embed.set_footer(text=f"Level {self.current_page + 1}/{self.total_count} • Total Levels: {self.total_count}")
 		return embed
 
 	async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -792,9 +813,15 @@ class ReviewQueueView(View):
 			await interaction.response.send_message("❌ No suggestions to review", ephemeral=True)
 			return
 
-		modal = RatingModal(suggestion["_id"])
-		await interaction.response.send_modal(modal)
-		await modal.wait()
+		# Use the weighted averages for difficulty and rating
+		difficulty = round(suggestion["difficulty"])
+		rating = round(suggestion["rating"])
+		
+		# Mark all suggestions for this level as moderated
+		for suggestion_data in suggestion["suggestions"]:
+			self.db.moderate_suggestion(suggestion_data["_id"], self.user_id, True, difficulty, rating)
+
+		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
 	@discord.ui.button(label="Not Sent ❌", style=discord.ButtonStyle.danger)
 	async def not_sent_button(self, interaction: discord.Interaction, button: Button):
@@ -807,7 +834,10 @@ class ReviewQueueView(View):
 			await interaction.response.send_message("❌ No suggestions to review", ephemeral=True)
 			return
 
-		self.db.moderate_suggestion(suggestion["_id"], self.user_id, False)
+		# Mark all suggestions for this level as not sent
+		for suggestion_data in suggestion["suggestions"]:
+			self.db.moderate_suggestion(suggestion_data["_id"], self.user_id, False)
+
 		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
 	async def on_timeout(self):

@@ -312,6 +312,45 @@ class SendDB:
                 "$addFields": {
                     "weighted_score": {"$ifNull": ["$user_score.weighted_score", 0]}
                 }
+            },
+            # Group by level to combine suggestions
+            {
+                "$group": {
+                    "_id": "$levelID",
+                    "suggestions": {"$push": "$$ROOT"},
+                    "total_weight": {"$sum": "$weighted_score"},
+                    "weighted_difficulty": {
+                        "$sum": {
+                            "$multiply": ["$difficulty", "$weighted_score"]
+                        }
+                    },
+                    "weighted_rating": {
+                        "$sum": {
+                            "$multiply": ["$rating", "$weighted_score"]
+                        }
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "levelID": "$_id",
+                    "suggestions": 1,
+                    "total_weight": 1,
+                    "difficulty": {
+                        "$cond": [
+                            {"$eq": ["$total_weight", 0]},
+                            {"$avg": "$suggestions.difficulty"},  # Fallback to simple average if no weights
+                            {"$divide": ["$weighted_difficulty", "$total_weight"]}
+                        ]
+                    },
+                    "rating": {
+                        "$cond": [
+                            {"$eq": ["$total_weight", 0]},
+                            {"$avg": "$suggestions.rating"},  # Fallback to simple average if no weights
+                            {"$divide": ["$weighted_rating", "$total_weight"]}
+                        ]
+                    }
+                }
             }
         ]
 
@@ -331,16 +370,15 @@ class SendDB:
                         {
                             "$project": {
                                 "levelID": 1,
-                                "userID": 1,
-                                "difficulty": 1,
-                                "rating": 1,
-                                "timestamp": 1,
-                                "weighted_score": 1,
+                                "difficulty": {"$round": ["$difficulty", 1]},
+                                "rating": {"$round": ["$rating", 1]},
+                                "total_weight": {"$round": ["$total_weight", 1]},
+                                "suggestion_count": {"$size": "$suggestions"},
                                 "level_name": {"$ifNull": [{"$first": "$level_info.name"}, "Unknown"]},
                                 "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, None]}
                             }
                         },
-                        {"$sort": {"weighted_score": -1, "timestamp": 1}},
+                        {"$sort": {"total_weight": -1}},
                         {"$skip": skip},
                         {"$limit": limit}
                     ]
@@ -376,16 +414,15 @@ class SendDB:
                 {
                     "$project": {
                         "levelID": 1,
-                        "userID": 1,
-                        "difficulty": 1,
-                        "rating": 1,
-                        "timestamp": 1,
-                        "weighted_score": 1,
+                        "difficulty": {"$round": ["$difficulty", 1]},
+                        "rating": {"$round": ["$rating", 1]},
+                        "total_weight": {"$round": ["$total_weight", 1]},
+                        "suggestion_count": {"$size": "$suggestions"},
                         "level_name": {"$ifNull": [{"$first": "$level_info.name"}, "Unknown"]},
                         "level_creator": {"$ifNull": [{"$first": "$level_info.creator"}, None]}
                     }
                 },
-                {"$sort": {"weighted_score": -1, "timestamp": 1}},
+                {"$sort": {"total_weight": -1}},
                 {"$limit": limit}
             ]
 
