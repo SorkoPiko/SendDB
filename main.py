@@ -10,7 +10,8 @@ from discord import app_commands
 from datetime import datetime, timezone, timedelta, UTC
 from math import ceil
 from enum import Enum
-from typing import Literal
+from typing import Literal, Optional, Union, Dict, List, Tuple
+from mongoengine.errors import ValidationError
 
 from db import SendDB
 from utils import SentChecker
@@ -156,11 +157,12 @@ checker = SentChecker(onSendResults, sendBanNotification)
 class SendBot(commands.Bot):
 	def __init__(self):
 		super().__init__(command_prefix='=', intents=discord.Intents.none())
-		self.sendChannel: discord.TextChannel = None
-		self.trendingChannel: discord.TextChannel = None
+		self.sendChannel = None
+		self.trendingChannel = None
 		self.trendingMessageID = previous_data.get("trending_message", None)
-		self.trendingMessage: discord.Message = None
-		self.synced = False
+		self.trendingMessage = None
+		self.update_trending_message.start()
+		self.weekly_mod_reminder.start()  # Start the weekly moderator reminder task
 
 	async def on_ready(self):
 		await self.wait_until_ready()
@@ -236,6 +238,76 @@ class SendBot(commands.Bot):
 
 		except Exception as e:
 			print(f"Error updating trending message: {e}")
+
+	@tasks.loop(hours=24)
+	async def weekly_mod_reminder(self):
+		"""Send weekly reminders to moderators about pending level suggestions."""
+		# Only send reminder on Sundays
+		if datetime.utcnow().weekday() != 6:  # 6 is Sunday (0 is Monday)
+			return
+            
+		# Get all moderators
+		moderators = db.get_all_moderators()
+		if not moderators:
+			return
+            
+		# Send a personalized message to each moderator
+		for mod in moderators:
+			try:
+				# Get count specific to this moderator
+				mod_id = mod["discord_id"]
+				mod_pending_count = db.get_pending_suggestion_count(mod_id)
+                
+				if mod_pending_count <= 0:
+					continue  # Skip if this moderator has already reviewed all levels
+                    
+				command_id = await self.get_command_id("pending-suggestions")
+				content = f"</pending-suggestions:{command_id}>" if command_id else "/pending-suggestions"
+
+				# Create a personalized reminder embed
+				embed = discord.Embed(
+					title="🔔 Weekly Moderator Reminder",
+					description=f"There are **{mod_pending_count}** level suggestions waiting for your review. Use {content} to start reviewing.",
+					color=0x00aaff
+				)
+                
+				mod_position = db.get_moderator_position(mod_id)
+
+				if mod_position > 0:
+					embed.add_field(
+						name="Your Progress",
+						value=f"You're in position **#{mod_position}** out of `{len(moderators)}` moderators. Keep up the good work!",
+						inline=False
+					)
+
+				embed.set_footer(text="This is a weekly reminder for moderators to review pending suggestions.")
+                
+				# Send DM to the moderator
+				user = await self.fetch_user(mod_id)
+				await user.send(embed=embed)
+			except (discord.NotFound, discord.Forbidden):
+				continue
+			except Exception as e:
+				print(f"Error sending reminder to moderator {mod.get('discord_id')}: {e}")
+                
+		print(f"Sent weekly reminders to moderators about pending suggestions")
+
+	@weekly_mod_reminder.before_loop
+	async def before_reminder(self):
+		"""Wait until the bot is ready before starting the reminder loop."""
+		await self.wait_until_ready()
+            
+		# If we're not on Sunday, wait until next Sunday
+		now = datetime.now(UTC)
+		days_until_sunday = (6 - now.weekday()) % 7  # Days until next Sunday
+		if days_until_sunday > 0:
+			# Wait until next Sunday at 15:00 UTC (a good time for most regions)
+			next_sunday = now + timedelta(days=days_until_sunday)
+			target_time = datetime(
+				next_sunday.year, next_sunday.month, next_sunday.day, 
+				15, 0, 0  # 15:00 UTC
+			)
+			await asyncio.sleep((target_time - now).total_seconds())
 
 client = SendBot()
 
@@ -685,287 +757,373 @@ class TrendingView(View):
 			pass
 
 class ModReviewView(View):
-		def __init__(self, db: SendDB, owner_id: int):
-			super().__init__(timeout=1800)  # 30 minute timeout
-			self.db = db
-			self.owner_id = owner_id
-			self.page = 0
-			self.page_size = 1  # Show one level at a time
-			self.message = None
-			self.current_level_id = None
-			
-		async def get_page_data(self) -> tuple[list[dict], int]:
-			# Only filter out levels this specific moderator has rated
-			return self.db.get_pending_suggestions(self.page, self.page_size, self.owner_id)
-			
-		def update_buttons(self, current_data):
-			self.prev_button.disabled = self.page == 0
-			self.next_button.disabled = not current_data  # Disable if no data
-			
-			# Only enable rating buttons if we have data
-			if current_data:
-				self.rate_button.disabled = False
-				self.reject_button.disabled = False
-			else:
-				self.rate_button.disabled = True
-				self.reject_button.disabled = True
-			
-		async def get_embed(self) -> discord.Embed:
-			levels, total_count = await self.get_page_data()
-			
-			if not levels:
-				embed = discord.Embed(
-					title="No More Levels To Review",
-					description="There are no more levels for you to review. Either all levels have been processed or you've already reviewed all available levels.",
-					color=0x00aaff
-				)
-				return embed
-			
-			level = levels[0]  # Get the first (and only) level
-			self.current_level_id = level["level_id"]
-			
-			# Get suggestion data
-			suggestions = self.db.get_user_suggestions(level["level_id"])
-			weighted_avg = self.db.get_weighted_suggestion_average(level["level_id"])
-			suggestion_score = self.db.get_suggestion_score(level["level_id"])
-			
-			# Create the embed
+	def __init__(self, db: SendDB, owner_id: int):
+		super().__init__(timeout=1800)  # 30 minute timeout
+		self.db = db
+		self.owner_id = owner_id
+		self.page = 0
+		self.page_size = 1  # Show one level at a time
+		self.message = None
+		self.current_level_id = None
+		
+	async def get_page_data(self) -> tuple[list[dict], int]:
+		# Only filter out levels this specific moderator has rated
+		return self.db.get_pending_suggestions(self.page, self.page_size, self.owner_id)
+		
+	def update_buttons(self, current_data):
+		self.prev_button.disabled = self.page == 0
+		self.next_button.disabled = not current_data  # Disable if no data
+		
+		# Only enable rating buttons if we have data
+		if current_data:
+			self.rate_button.disabled = False
+			self.reject_button.disabled = False
+		else:
+			self.rate_button.disabled = True
+			self.reject_button.disabled = True
+		
+	async def get_embed(self) -> discord.Embed:
+		levels, total_count = await self.get_page_data()
+		
+		if not levels:
 			embed = discord.Embed(
-				title=f"Level Review: {level['level_name']}",
-				description=f"ID: {level['level_id']}\nCreator: **{level['creator_name']}**\n"
-						   f"Reviewing level {self.page + 1} of {total_count}\n"
-						   f"[View on GDBrowser](https://gdbrowser.com/{level['level_id']})",
+				title="No More Levels To Review",
+				description="There are no more levels for you to review. Either all levels have been processed or you've already reviewed all available levels.",
 				color=0x00aaff
 			)
-			
-			# Add suggestion summary information
-			embed.add_field(
-				name="Suggestion Summary",
-				value=f"**Total Suggestions:** {level['suggestion_count']}\n"
-					  f"**Suggestion Score:** {suggestion_score}\n"
-					  f"**Latest Suggestion:** <t:{int(level['latest_suggestion'].timestamp())}:R>",
-				inline=False
-			)
-			
-			# Add weighted average information
-			embed.add_field(
-				name="Weighted Suggestion Average",
-				value=f"**Difficulty:** {weighted_avg['difficulty']}/10 ({DIFFICULTIES[weighted_avg['difficulty']]})\n"
-					  f"**Rating:** {weighted_avg['rating']}/5 ({RATINGS[weighted_avg['rating']]})",
-				inline=False
-			)
-			
-			embed.set_footer(text="Choose to rate or reject the level")
 			return embed
 		
-		async def interaction_check(self, interaction: discord.Interaction) -> bool:
-			return interaction.user.id == self.owner_id
+		level = levels[0]  # Get the first (and only) level
+		self.current_level_id = level["level_id"]
 		
-		@discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="⬅️")
-		async def prev_button(self, interaction: discord.Interaction, button: Button):
-			self.page = max(0, self.page - 1)
-			levels, _ = await self.get_page_data()
-			self.update_buttons(levels)
-			await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+		# Get suggestion data
+		#suggestions = self.db.get_user_suggestions(level["level_id"])
+		weighted_avg = self.db.get_weighted_suggestion_average(level["level_id"])
+		suggestion_score = self.db.get_suggestion_score(level["level_id"])
 		
-		@discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="➡️")
-		async def next_button(self, interaction: discord.Interaction, button: Button):
-			self.page += 1
-			levels, _ = await self.get_page_data()
-			self.update_buttons(levels)
-			await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+		# Create the embed
+		embed = discord.Embed(
+			title=f"Level Review: {level['level_name']}",
+			description=f"ID: {level['level_id']}\nCreator: **{level['creator_name']}**\n"
+						f"Reviewing level {self.page + 1} of {total_count}\n"
+						f"[View on GDBrowser](https://gdbrowser.com/{level['level_id']})",
+			color=0x00aaff
+		)
 		
-		@discord.ui.button(label="Rate Level", style=discord.ButtonStyle.success, row=1)
-		async def rate_button(self, interaction: discord.Interaction, button: Button):
-			if not self.current_level_id:
-				await interaction.response.send_message("No level is currently selected.", ephemeral=True)
-				return
-			
-			# Get suggested values from weighted average
-			weighted_avg = self.db.get_weighted_suggestion_average(self.current_level_id)
-			suggested_difficulty = round(weighted_avg["difficulty"]) if weighted_avg["difficulty"] > 0 else 5
-			suggested_rating = round(weighted_avg["rating"]) if weighted_avg["rating"] > 0 else 3
-			
-			# Create modal for both difficulty and rating inputs
-			class RatingModal(discord.ui.Modal, title=f"Rate Level"):
-				def __init__(self, outer_view):
-					super().__init__()
-					self.outer_view = outer_view
-				
-				difficulty = discord.ui.TextInput(
-					label="Difficulty from 1 (Auto) to 10 (Demon)",
-					placeholder="Enter a star value from 1 (Auto) to 10 (Demon)",
-					default=str(suggested_difficulty),
-					required=True,
-					min_length=1,
-					max_length=2
-				)
-				
-				rating = discord.ui.TextInput(
-					label="Rating from 1 (Rate) to 5 (Mythic)",
-					placeholder="Enter a number from 1 (Rate) to 5 (Mythic)",
-					default=str(suggested_rating),
-					required=True,
-					min_length=1,
-					max_length=1
-				)
-				
-				async def on_submit(self, interaction: discord.Interaction):
-					try:
-						difficulty_val = int(self.difficulty.value)
-						rating_val = int(self.rating.value)
-						
-						if not (1 <= difficulty_val <= 10):
-							await interaction.response.send_message("Invalid value. Difficulty must be 1-10.", ephemeral=True)
-							return
-							
-						if not (1 <= rating_val <= 5):
-							await interaction.response.send_message("Invalid value. Rating must be 1-5.", ephemeral=True)
-							return
-						
-						# Store the rated level ID from the outer view
-						rated_level_id = self.outer_view.current_level_id
-						
-						# Store the moderator's rating with both difficulty and quality rating
-						self.outer_view.db.add_mod_rating(interaction.user.id, rated_level_id, difficulty_val, rating_val)
-						
-						await interaction.response.send_message(
-							f"Your rating has been recorded:\n**Difficulty:** {DIFFICULTIES[difficulty_val]}\n**Rating:** {RATINGS[rating_val]}",
-							ephemeral=True
-						)
-						
-						# Keep track of the current page before refreshing
-						current_page = self.outer_view.page
-						
-						# Refresh the current page to see updated data
-						levels, _ = await self.outer_view.get_page_data()
-						
-						# If no more levels on current page, try to get data from other pages
-						if not levels:
-							# Try next page first (if we're not on page 0)
-							if current_page > 0:
-								# Try previous page
-								self.outer_view.page = current_page - 1
-								levels, _ = await self.outer_view.get_page_data()
-								
-								# If still no levels, try earlier pages
-								page_to_try = current_page - 2
-								while not levels and page_to_try >= 0:
-									self.outer_view.page = page_to_try
-									levels, _ = await self.outer_view.get_page_data()
-									page_to_try -= 1
-							
-							# If still no levels, try next pages
-							if not levels:
-								self.outer_view.page = current_page + 1
-								levels, _ = await self.outer_view.get_page_data()
-								
-								# If still no levels, keep trying next pages up to 5 more
-								page_to_try = current_page + 2
-								max_pages_to_try = current_page + 5
-								while not levels and page_to_try <= max_pages_to_try:
-									self.outer_view.page = page_to_try
-									levels, _ = await self.outer_view.get_page_data()
-									page_to_try += 1
-						
-						self.outer_view.update_buttons(levels)
-						await self.outer_view.message.edit(embed=await self.outer_view.get_embed(), view=self.outer_view)
-						
-					except ValueError:
-						await interaction.response.send_message("Please enter valid numbers for difficulty and rating.", ephemeral=True)
-					except discord.errors.HTTPException as e:
-						# If the message edit fails due to expired token, send a new message
-						if e.code == 50027:  # Invalid Webhook Token
-							await interaction.followup.send(
-								"The review session has been updated. Please use the buttons on this message.",
-								view=self.outer_view,
-								embed=await self.outer_view.get_embed()
-							)
-							# Update message reference
-							self.outer_view.message = await interaction.followup.fetch_message()
-			
-			# Create modal and set reference to the parent view
-			modal = RatingModal(self)
-			await interaction.response.send_modal(modal)
+		# Add suggestion summary information
+		embed.add_field(
+			name="Suggestion Summary",
+			value=f"**Total Suggestions:** {level['suggestion_count']}\n"
+					f"**Suggestion Score:** {suggestion_score}\n"
+					f"**Latest Suggestion:** <t:{int(level['latest_suggestion'].timestamp())}:R>",
+			inline=False
+		)
 		
-		@discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, row=1)
-		async def reject_button(self, interaction: discord.Interaction, button: Button):
-			if not self.current_level_id:
-				await interaction.response.send_message("No level is currently selected.", ephemeral=True)
-				return
-				
-			# Store the level ID before updating
-			rejected_level_id = self.current_level_id
-				
-			# Store the moderator's rejection
-			self.db.add_mod_rating(interaction.user.id, rejected_level_id, rejected=True)
+		# Add weighted average information
+		embed.add_field(
+			name="Weighted Suggestion Average",
+			value=f"**Difficulty:** {weighted_avg['difficulty']}/10 ({DIFFICULTIES[weighted_avg['difficulty']]})\n"
+					f"**Rating:** {weighted_avg['rating']}/5 ({RATINGS[weighted_avg['rating']]})",
+			inline=False
+		)
+		
+		embed.set_footer(text="Choose to rate or reject the level")
+		return embed
+	
+	async def interaction_check(self, interaction: discord.Interaction) -> bool:
+		return interaction.user.id == self.owner_id
+	
+	@discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="⬅️")
+	async def prev_button(self, interaction: discord.Interaction, button: Button):
+		self.page = max(0, self.page - 1)
+		levels, _ = await self.get_page_data()
+		self.update_buttons(levels)
+		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+	
+	@discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="➡️")
+	async def next_button(self, interaction: discord.Interaction, button: Button):
+		self.page += 1
+		levels, _ = await self.get_page_data()
+		self.update_buttons(levels)
+		await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+	
+	@discord.ui.button(label="Rate Level", style=discord.ButtonStyle.success, row=1)
+	async def rate_button(self, interaction: discord.Interaction, button: Button):
+		if not self.current_level_id:
+			await interaction.response.send_message("No level is currently selected.", ephemeral=True)
+			return
+		
+		# Get suggested values from weighted average
+		weighted_avg = self.db.get_weighted_suggestion_average(self.current_level_id)
+		suggested_difficulty = round(weighted_avg["difficulty"]) if weighted_avg["difficulty"] > 0 else 5
+		suggested_rating = round(weighted_avg["rating"]) if weighted_avg["rating"] > 0 else 3
+		
+		# Create modal for both difficulty and rating inputs
+		class RatingModal(discord.ui.Modal, title=f"Rate Level"):
+			def __init__(self, outer_view):
+				super().__init__()
+				self.outer_view = outer_view
 			
-			await interaction.response.send_message(
-				f"You've rejected level {rejected_level_id}. Users who suggested it will have their accuracy negatively impacted.",
-				ephemeral=True
+			difficulty = discord.ui.TextInput(
+				label="Difficulty from 1 (Auto) to 10 (Demon)",
+				placeholder="Enter a star value from 1 (Auto) to 10 (Demon)",
+				default=str(suggested_difficulty),
+				required=True,
+				min_length=1,
+				max_length=2
 			)
 			
-			# Keep track of the current page before refreshing
-			current_page = self.page
+			rating = discord.ui.TextInput(
+				label="Rating from 1 (Rate) to 5 (Mythic)",
+				placeholder="Enter a number from 1 (Rate) to 5 (Mythic)",
+				default=str(suggested_rating),
+				required=True,
+				min_length=1,
+				max_length=1
+			)
 			
-			# Get current page data to check if there are still levels to review
-			levels, _ = await self.get_page_data()
-			
-			# If no more levels on current page, try to get data from other pages
-			if not levels:
-				# Try next page first (if we're not on page 0)
-				if current_page > 0:
-					# Try previous page
-					self.page = current_page - 1
-					levels, _ = await self.get_page_data()
-					
-					# If still no levels, try earlier pages
-					page_to_try = current_page - 2
-					while not levels and page_to_try >= 0:
-						self.page = page_to_try
-						levels, _ = await self.get_page_data()
-						page_to_try -= 1
-				
-				# If still no levels, try next pages
-				if not levels:
-					self.page = current_page + 1
-					levels, _ = await self.get_page_data()
-					
-					# If still no levels, keep trying next pages up to 5 more
-					page_to_try = current_page + 2
-					max_pages_to_try = current_page + 5
-					while not levels and page_to_try <= max_pages_to_try:
-						self.page = page_to_try
-						levels, _ = await self.get_page_data()
-						page_to_try += 1
-			
-			self.update_buttons(levels)
-			
-			try:
-				await self.message.edit(embed=await self.get_embed(), view=self)
-			except discord.errors.HTTPException as e:
-				# If the message edit fails due to expired token, send a new message
-				if e.code == 50027:  # Invalid Webhook Token
-					await interaction.followup.send(
-						"The review session has been updated. Please use the buttons on this message.",
-						view=self,
-						embed=await self.get_embed()
-					)
-					# Update message reference
-					self.message = await interaction.followup.fetch_message()
-			
-		async def on_timeout(self):
-			# When view times out, try to disable buttons
-			# But safely handle the case where the webhook token is invalid
-			if self.message:
-				for child in self.children:
-					child.disabled = True
+			async def on_submit(self, interaction: discord.Interaction):
 				try:
-					await self.message.edit(view=self)
-				except discord.errors.HTTPException:
-					# If edit fails due to token expiry, just pass
-					# We can't do much at this point since we can't interact with the user
-					pass
+					difficulty_val = int(self.difficulty.value)
+					rating_val = int(self.rating.value)
+					
+					if not (1 <= difficulty_val <= 10):
+						await interaction.response.send_message("Invalid value. Difficulty must be 1-10.", ephemeral=True)
+						return
+						
+					if not (1 <= rating_val <= 5):
+						await interaction.response.send_message("Invalid value. Rating must be 1-5.", ephemeral=True)
+						return
+					
+					# Store the rated level ID from the outer view
+					rated_level_id = self.outer_view.current_level_id
+					
+					# Store the moderator's rating with both difficulty and quality rating
+					self.outer_view.db.add_mod_rating(interaction.user.id, rated_level_id, difficulty_val, rating_val)
+					
+					await interaction.response.send_message(
+						f"Your rating has been recorded:\n**Difficulty:** {DIFFICULTIES[difficulty_val]}\n**Rating:** {RATINGS[rating_val]}",
+						ephemeral=True
+					)
+					
+					# Keep track of the current page before refreshing
+					current_page = self.outer_view.page
+					
+					# Refresh the current page to see updated data
+					levels, _ = await self.outer_view.get_page_data()
+					
+					# If no more levels on current page, try to get data from other pages
+					if not levels:
+						# Try next page first (if we're not on page 0)
+						if current_page > 0:
+							# Try previous page
+							self.outer_view.page = current_page - 1
+							levels, _ = await self.outer_view.get_page_data()
+							
+							# If still no levels, try earlier pages
+							page_to_try = current_page - 2
+							while not levels and page_to_try >= 0:
+								self.outer_view.page = page_to_try
+								levels, _ = await self.outer_view.get_page_data()
+								page_to_try -= 1
+						
+						# If still no levels, try next pages
+						if not levels:
+							self.outer_view.page = current_page + 1
+							levels, _ = await self.outer_view.get_page_data()
+							
+							# If still no levels, keep trying next pages up to 5 more
+							page_to_try = current_page + 2
+							max_pages_to_try = current_page + 5
+							while not levels and page_to_try <= max_pages_to_try:
+								self.outer_view.page = page_to_try
+								levels, _ = await self.outer_view.get_page_data()
+								page_to_try += 1
+					
+					self.outer_view.update_buttons(levels)
+					await self.outer_view.message.edit(embed=await self.outer_view.get_embed(), view=self.outer_view)
+					
+				except ValueError:
+					await interaction.response.send_message("Please enter valid numbers for difficulty and rating.", ephemeral=True)
+				except discord.errors.HTTPException as e:
+					# If the message edit fails due to expired token, send a new message
+					if e.code == 50027:  # Invalid Webhook Token
+						await interaction.followup.send(
+							"The review session has been updated. Please use the buttons on this message.",
+							view=self.outer_view,
+							embed=await self.outer_view.get_embed()
+						)
+						# Update message reference
+						self.outer_view.message = await interaction.followup.fetch_message()
+		
+		# Create modal and set reference to the parent view
+		modal = RatingModal(self)
+		await interaction.response.send_modal(modal)
+	
+	@discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, row=1)
+	async def reject_button(self, interaction: discord.Interaction, button: Button):
+		if not self.current_level_id:
+			await interaction.response.send_message("No level is currently selected.", ephemeral=True)
+			return
+			
+		# Store the level ID before updating
+		rejected_level_id = self.current_level_id
+			
+		# Store the moderator's rejection
+		self.db.add_mod_rating(interaction.user.id, rejected_level_id, rejected=True)
+		
+		await interaction.response.send_message(
+			f"You've rejected level {rejected_level_id}. Users who suggested it will have their accuracy negatively impacted.",
+			ephemeral=True
+		)
+		
+		# Keep track of the current page before refreshing
+		current_page = self.page
+		
+		# Get current page data to check if there are still levels to review
+		levels, _ = await self.get_page_data()
+		
+		# If no more levels on current page, try to get data from other pages
+		if not levels:
+			# Try next page first (if we're not on page 0)
+			if current_page > 0:
+				# Try previous page
+				self.page = current_page - 1
+				levels, _ = await self.get_page_data()
+				
+				# If still no levels, try earlier pages
+				page_to_try = current_page - 2
+				while not levels and page_to_try >= 0:
+					self.page = page_to_try
+					levels, _ = await self.get_page_data()
+					page_to_try -= 1
+			
+			# If still no levels, try next pages
+			if not levels:
+				self.page = current_page + 1
+				levels, _ = await self.get_page_data()
+				
+				# If still no levels, keep trying next pages up to 5 more
+				page_to_try = current_page + 2
+				max_pages_to_try = current_page + 5
+				while not levels and page_to_try <= max_pages_to_try:
+					self.page = page_to_try
+					levels, _ = await self.get_page_data()
+					page_to_try += 1
+		
+		self.update_buttons(levels)
+		
+		try:
+			await self.message.edit(embed=await self.get_embed(), view=self)
+		except discord.errors.HTTPException as e:
+			# If the message edit fails due to expired token, send a new message
+			if e.code == 50027:  # Invalid Webhook Token
+				await interaction.followup.send(
+					"The review session has been updated. Please use the buttons on this message.",
+					view=self,
+					embed=await self.get_embed()
+				)
+				# Update message reference
+				self.message = await interaction.followup.fetch_message()
+		
+	async def on_timeout(self):
+		for item in self.children:
+			item.disabled = True
+		try:
+			await self.message.edit(view=self)
+		except:
+			pass
+
+class CheckLevelView(discord.ui.View):
+	def __init__(self, levelData: dict):
+		super().__init__(timeout=300)  # 5 minute timeout
+		self.message = None
+		self.levelData = levelData
+		
+	@discord.ui.button(label="Suggest Rating", style=discord.ButtonStyle.primary)
+	async def suggest_button(self, interaction: discord.Interaction, button: Button):
+		# Create a modal for rating input
+		class SuggestRatingModal(discord.ui.Modal, title=f"Rate Level: {self.levelData['name']}"):
+			difficulty = discord.ui.TextInput(
+				label="Difficulty from 1 (Auto) to 10 (Demon)",
+				placeholder="Enter a star value from 1 (Auto) to 10 (Demon)",
+				required=True,
+				min_length=1,
+				max_length=2
+			)
+			
+			rating = discord.ui.TextInput(
+				label="Rating from 1 (Rate) to 5 (Mythic)",
+				placeholder="Enter a star value from 1 (Rate) to 5 (Mythic)",
+				required=True,
+				min_length=1,
+				max_length=1
+			)
+			
+			async def on_submit(self, interaction: discord.Interaction):
+				try:
+					difficulty_val = int(self.difficulty.value)
+					rating_val = int(self.rating.value)
+					
+					if not (1 <= difficulty_val <= 10) or not (1 <= rating_val <= 5):
+						await interaction.response.send_message("Invalid values. Difficulty must be 1-10 and rating must be 1-5.", ephemeral=True)
+						return
+					
+					# Store the user's suggestion
+					db.add_user_suggestion(interaction.user.id, self.levelData["id"], difficulty_val, rating_val)
+					
+					# Get user weight info
+					weight_info = db.get_user_weight(interaction.user.id)
+					
+					await interaction.response.send_message(
+						f"Your suggestion for **{self.levelData['name']}** has been recorded.\n\n"
+						f"**Difficulty:** {DIFFICULTIES[difficulty_val]}\n"
+						f"**Rating:** {RATINGS[rating_val]}\n\n"
+						f"Your suggestion weight: **{weight_info['weight']:.2f}**",
+						ephemeral=True
+					)
+				except ValueError:
+					await interaction.response.send_message("Please enter valid numbers for difficulty and rating.", ephemeral=True)
+				except discord.errors.HTTPException as e:
+					# Handle expired token
+					if e.code == 50027:  # Invalid Webhook Token
+						# Create a new view with a new token
+						new_view = CheckLevelView()
+						await interaction.followup.send(
+							f"Your suggestion for **{self.levelData['name']}** has been recorded, but the session expired. Use this new button if needed.",
+							view=new_view,
+							ephemeral=True
+						)
+						new_view.message = await interaction.followup.fetch_message()
+		
+		try:
+			# Send the modal to the user
+			modal = SuggestRatingModal()
+			await interaction.response.send_modal(modal)
+		except discord.errors.HTTPException as e:
+			# Handle expired token
+			if e.code == 50027:  # Invalid Webhook Token
+				# Create a new view and send a new message
+				new_view = CheckLevelView()
+				embed = discord.Embed(
+					title=f"Level: {self.levelData['name']}",
+					description=f"The previous view expired. Use this new button to suggest a rating.",
+					color=0x00ff00
+				)
+				await interaction.followup.send(embed=embed, view=new_view, ephemeral=True)
+				new_view.message = await interaction.followup.fetch_message()
+	
+	async def on_timeout(self):
+		# Disable the button when the view times out
+		if self.message:
+			for child in self.children:
+				child.disabled = True
+			try:
+				await self.message.edit(view=self)
+			except discord.errors.HTTPException:
+				# If edit fails due to token expiry, just pass
+				# We can't do much at this point since we can't interact with the user
+				pass
 
 class FollowCommands(commands.GroupCog, name="follow"):
 	def __init__(self, bot: commands.Bot):
@@ -1199,98 +1357,9 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 	if creatorString:
 		embed.set_author(name=levelData["creatorName"], url=f"https://gdbrowser.com/u/{levelData['accountID']}", icon_url="https://gdbrowser.com/assets/cp.png")
 
-	# Add a button to suggest ratings if the user hasn't already
-	class CheckLevelView(discord.ui.View):
-		def __init__(self):
-			super().__init__(timeout=300)  # 5 minute timeout
-			self.message = None
-			
-		@discord.ui.button(label="Suggest Rating", style=discord.ButtonStyle.primary)
-		async def suggest_button(self, interaction: discord.Interaction, button: Button):
-			# Create a modal for rating input
-			class SuggestRatingModal(discord.ui.Modal, title=f"Rate Level: {levelData['name']}"):
-				difficulty = discord.ui.TextInput(
-					label="Difficulty from 1 (Auto) to 10 (Demon)",
-					placeholder="Enter a star value from 1 (Auto) to 10 (Demon)",
-					required=True,
-					min_length=1,
-					max_length=2
-				)
-				
-				rating = discord.ui.TextInput(
-					label="Rating from 1 (Rate) to 5 (Mythic)",
-					placeholder="Enter a star value from 1 (Rate) to 5 (Mythic)",
-					required=True,
-					min_length=1,
-					max_length=1
-				)
-				
-				async def on_submit(self, interaction: discord.Interaction):
-					try:
-						difficulty_val = int(self.difficulty.value)
-						rating_val = int(self.rating.value)
-						
-						if not (1 <= difficulty_val <= 10) or not (1 <= rating_val <= 5):
-							await interaction.response.send_message("Invalid values. Difficulty must be 1-10 and rating must be 1-5.", ephemeral=True)
-							return
-						
-						# Store the user's suggestion
-						db.add_user_suggestion(interaction.user.id, level_id, difficulty_val, rating_val)
-						
-						# Get user weight info
-						weight_info = db.get_user_weight(interaction.user.id)
-						
-						await interaction.response.send_message(
-							f"Your suggestion for **{levelData['name']}** has been recorded.\n\n"
-							f"**Difficulty:** {DIFFICULTIES[difficulty_val]}\n"
-							f"**Rating:** {RATINGS[rating_val]}\n\n"
-							f"Your suggestion weight: **{weight_info['weight']:.2f}**",
-							ephemeral=True
-						)
-					except ValueError:
-						await interaction.response.send_message("Please enter valid numbers for difficulty and rating.", ephemeral=True)
-					except discord.errors.HTTPException as e:
-						# Handle expired token
-						if e.code == 50027:  # Invalid Webhook Token
-							# Create a new view with a new token
-							new_view = CheckLevelView()
-							await interaction.followup.send(
-								f"Your suggestion for **{levelData['name']}** has been recorded, but the session expired. Use this new button if needed.",
-								view=new_view,
-								ephemeral=True
-							)
-							new_view.message = await interaction.followup.fetch_message()
-			
-			try:
-				# Send the modal to the user
-				modal = SuggestRatingModal()
-				await interaction.response.send_modal(modal)
-			except discord.errors.HTTPException as e:
-				# Handle expired token
-				if e.code == 50027:  # Invalid Webhook Token
-					# Create a new view and send a new message
-					new_view = CheckLevelView()
-					embed = discord.Embed(
-						title=f"Level: {levelData['name']}",
-						description=f"The previous view expired. Use this new button to suggest a rating.",
-						color=0x00ff00
-					)
-					await interaction.followup.send(embed=embed, view=new_view, ephemeral=True)
-					new_view.message = await interaction.followup.fetch_message()
-		
-		async def on_timeout(self):
-			# Disable the button when the view times out
-			if self.message:
-				for child in self.children:
-					child.disabled = True
-				try:
-					await self.message.edit(view=self)
-				except discord.errors.HTTPException:
-					# If edit fails due to token expiry, just pass
-					# We can't do much at this point since we can't interact with the user
-					pass
+	levelData["id"] = level_id
 
-	view = CheckLevelView()
+	view = CheckLevelView(levelData)
 	await interaction.response.send_message(
 		content='⚠️ **WARNING**: This level was created before the bot started tracking levels. The data may be inaccurate.' if level_id < OLDEST_LEVEL else '', 
 		embed=embed,
@@ -1407,7 +1476,7 @@ async def pending_suggestions(interaction: discord.Interaction):
 	view = ModReviewView(db, interaction.user.id)
 	levels, _ = await view.get_page_data()
 	view.update_buttons(levels)
-	await interaction.response.send_message(embed=await view.get_embed(), view=view)
+	await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 	view.message = await interaction.original_response()
 
 @client.tree.command(name="my-suggestions", description="View your suggestion history and accuracy")

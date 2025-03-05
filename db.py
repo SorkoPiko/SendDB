@@ -677,9 +677,53 @@ class SendDB:
 		return moderators.find_one({"discord_id": discord_id})
 	
 	def get_all_moderators(self) -> list[dict]:
-		"""Get all moderators"""
-		moderators = self.get_collection("data", "moderators")
-		return list(moderators.find().sort("username", 1))
+		"""Get all moderators from the database."""
+		mods = self.get_collection("data", "moderators").find({})
+		return list(mods)
+		
+	def get_pending_suggestion_count(self, mod_id: Optional[int] = None) -> int:
+		"""
+		Get the total count of levels that have pending user suggestions.
+		
+		Args:
+			mod_id: If provided, only count levels this specific moderator hasn't rated yet
+		
+		Returns:
+			int: The count of levels with pending suggestions
+		"""
+		# Collection references
+		suggestions = self.get_collection("data", "user_suggestions")
+		
+		# Get level IDs that have already been rated
+		already_rated = []
+		if mod_id is not None:
+			# Only filter out levels this specific moderator has rated
+			mod_ratings = self.get_collection("data", "mod_ratings").find({"mod_id": mod_id})
+			for rating in mod_ratings:
+				already_rated.append(rating["level_id"])
+		else:
+			# Filter out levels that any moderator has rated
+			mod_ratings = self.get_collection("data", "mod_ratings").find({}, {"level_id": 1})
+			for rating in mod_ratings:
+				already_rated.append(rating["level_id"])
+		
+		# Base match criteria - get unique level IDs with suggestions
+		match_filter = {}
+		if already_rated:
+			match_filter["level_id"] = {"$nin": already_rated}
+		
+		# Count unique level IDs with suggestions that match our filter
+		pipeline = [
+			{"$match": match_filter},
+			{"$group": {"_id": "$level_id"}},
+			{"$count": "pending_count"}
+		]
+		
+		result = list(suggestions.aggregate(pipeline))
+		
+		if result and "pending_count" in result[0]:
+			return result[0]["pending_count"]
+		return 0
 
 	def _update_user_weights_for_rejected(self, level_id: int):
 		"""Penalize users who suggested ratings for a level that was rejected by a moderator"""
@@ -745,3 +789,47 @@ class SendDB:
 					}
 				]
 			)
+
+	def get_moderator_position(self, mod_id: int) -> int:
+		"""
+		Determine a moderator's position/ranking compared to other moderators
+		based on how many levels they've reviewed.
+		
+		Args:
+			mod_id: The Discord ID of the moderator
+			
+		Returns:
+			int: The moderator's position (1-indexed, where 1 is the most active)
+				 Returns 0 if the moderator hasn't reviewed any levels or isn't found.
+		"""
+		mod_ratings = self.get_collection("data", "mod_ratings")
+		
+		# Get the count of unique levels reviewed by each moderator
+		pipeline = [
+			{"$group": {
+				"_id": {
+					"mod_id": "$mod_id",
+					"level_id": "$level_id"
+				}
+			}},
+			{"$group": {
+				"_id": "$_id.mod_id",
+				"level_count": {"$sum": 1}
+			}},
+			{"$sort": {"level_count": -1}}
+		]
+		
+		results = list(mod_ratings.aggregate(pipeline))
+		
+		# If no results, return 0
+		if not results:
+			return 0
+		
+		# Look for the target moderator in the results
+		for i, result in enumerate(results):
+			if result["_id"] == mod_id:
+				return i + 1  # Convert to 1-indexed position
+				
+		# If moderator not found in results, they haven't reviewed any levels
+		return 0
+		
