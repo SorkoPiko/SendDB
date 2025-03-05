@@ -819,27 +819,66 @@ class ModReviewView(View):
 							await interaction.response.send_message("Invalid value. Rating must be 1-5.", ephemeral=True)
 							return
 						
+						# Store the rated level ID
+						rated_level_id = self.current_level_id
+						
 						# Store the moderator's rating with both difficulty and quality rating
-						self.outer_view.db.add_mod_rating(interaction.user.id, self.outer_view.current_level_id, difficulty_val, rating_val)
+						self.outer_view.db.add_mod_rating(interaction.user.id, rated_level_id, difficulty_val, rating_val)
 						
 						await interaction.response.send_message(
 							f"Your rating has been recorded:\n**Difficulty:** {DIFFICULTIES[difficulty_val]}\n**Rating:** {RATINGS[rating_val]}",
 							ephemeral=True
 						)
 						
-						# Get current page data to check if there are still levels to review
+						# Keep track of the current page before refreshing
+						current_page = self.outer_view.page
+						
+						# Refresh the current page to see updated data
 						levels, _ = await self.outer_view.get_page_data()
 						
-						# If no more levels on current page, go to previous page if possible
-						if not levels and self.outer_view.page > 0:
-							self.outer_view.page -= 1
-							levels, _ = await self.outer_view.get_page_data()
+						# If no more levels on current page, try to get data from other pages
+						if not levels:
+							# Try next page first (if we're not on page 0)
+							if current_page > 0:
+								# Try previous page
+								self.outer_view.page = current_page - 1
+								levels, _ = await self.outer_view.get_page_data()
+								
+								# If still no levels, try earlier pages
+								page_to_try = current_page - 2
+								while not levels and page_to_try >= 0:
+									self.outer_view.page = page_to_try
+									levels, _ = await self.outer_view.get_page_data()
+									page_to_try -= 1
+							
+							# If still no levels, try next pages
+							if not levels:
+								self.outer_view.page = current_page + 1
+								levels, _ = await self.outer_view.get_page_data()
+								
+								# If still no levels, keep trying next pages up to 5 more
+								page_to_try = current_page + 2
+								max_pages_to_try = current_page + 5
+								while not levels and page_to_try <= max_pages_to_try:
+									self.outer_view.page = page_to_try
+									levels, _ = await self.outer_view.get_page_data()
+									page_to_try += 1
 						
 						self.outer_view.update_buttons(levels)
 						await self.outer_view.message.edit(embed=await self.outer_view.get_embed(), view=self.outer_view)
 						
 					except ValueError:
 						await interaction.response.send_message("Please enter valid numbers for difficulty and rating.", ephemeral=True)
+					except discord.errors.HTTPException as e:
+						# If the message edit fails due to expired token, send a new message
+						if e.code == 50027:  # Invalid Webhook Token
+							await interaction.followup.send(
+								"The review session has been updated. Please use the buttons on this message.",
+								view=self.outer_view,
+								embed=await self.outer_view.get_embed()
+							)
+							# Update message reference
+							self.outer_view.message = await interaction.followup.fetch_message()
 			
 			# Set reference to the parent view
 			modal = RatingModal()
@@ -853,31 +892,79 @@ class ModReviewView(View):
 				await interaction.response.send_message("No level is currently selected.", ephemeral=True)
 				return
 				
+			# Store the level ID before updating
+			rejected_level_id = self.current_level_id
+				
 			# Store the moderator's rejection
-			self.db.add_mod_rating(interaction.user.id, self.current_level_id, rejected=True)
+			self.db.add_mod_rating(interaction.user.id, rejected_level_id, rejected=True)
 			
 			await interaction.response.send_message(
-				f"You've rejected level {self.current_level_id}. Users who suggested it will have their accuracy negatively impacted.",
+				f"You've rejected level {rejected_level_id}. Users who suggested it will have their accuracy negatively impacted.",
 				ephemeral=True
 			)
+			
+			# Keep track of the current page before refreshing
+			current_page = self.page
 			
 			# Get current page data to check if there are still levels to review
 			levels, _ = await self.get_page_data()
 			
-			# If no more levels on current page, go to previous page if possible
-			if not levels and self.page > 0:
-				self.page -= 1
-				levels, _ = await self.get_page_data()
+			# If no more levels on current page, try to get data from other pages
+			if not levels:
+				# Try next page first (if we're not on page 0)
+				if current_page > 0:
+					# Try previous page
+					self.page = current_page - 1
+					levels, _ = await self.get_page_data()
+					
+					# If still no levels, try earlier pages
+					page_to_try = current_page - 2
+					while not levels and page_to_try >= 0:
+						self.page = page_to_try
+						levels, _ = await self.get_page_data()
+						page_to_try -= 1
+				
+				# If still no levels, try next pages
+				if not levels:
+					self.page = current_page + 1
+					levels, _ = await self.get_page_data()
+					
+					# If still no levels, keep trying next pages up to 5 more
+					page_to_try = current_page + 2
+					max_pages_to_try = current_page + 5
+					while not levels and page_to_try <= max_pages_to_try:
+						self.page = page_to_try
+						levels, _ = await self.get_page_data()
+						page_to_try += 1
 			
 			self.update_buttons(levels)
-			await self.message.edit(embed=await self.get_embed(), view=self)
+			
+			try:
+				await self.message.edit(embed=await self.get_embed(), view=self)
+			except discord.errors.HTTPException as e:
+				# If the message edit fails due to expired token, send a new message
+				if e.code == 50027:  # Invalid Webhook Token
+					await interaction.followup.send(
+						"The review session has been updated. Please use the buttons on this message.",
+						view=self,
+						embed=await self.get_embed()
+					)
+					# Update message reference
+					self.message = await interaction.followup.fetch_message()
 			
 		async def on_timeout(self):
+			# When view times out, try to disable buttons
+			# But safely handle the case where the webhook token is invalid
 			if self.message:
 				for child in self.children:
 					child.disabled = True
-				await self.message.edit(view=self)
-	
+				try:
+					await self.message.edit(view=self)
+				except discord.errors.HTTPException:
+					# If edit fails due to token expiry, just pass
+					# We can't do much at this point since we can't interact with the user
+					pass
+
 class FollowCommands(commands.GroupCog, name="follow"):
 	def __init__(self, bot: commands.Bot):
 		self.bot = bot
@@ -1120,16 +1207,16 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 			# Create a modal for rating input
 			class SuggestRatingModal(discord.ui.Modal, title=f"Rate Level: {levelData['name']}"):
 				difficulty = discord.ui.TextInput(
-					label="Difficulty (1-10)",
-					placeholder="Enter a number from 1 to 10",
+					label="Difficulty from 1 (Auto) to 10 (Demon)",
+					placeholder="Enter a star value from 1 (Auto) to 10 (Demon)",
 					required=True,
 					min_length=1,
 					max_length=2
 				)
 				
 				rating = discord.ui.TextInput(
-					label="Rating (1-5)",
-					placeholder="Enter a number from 1 to 5",
+					label="Rating from 1 (Rate) to 5 (Mythic)",
+					placeholder="Enter a star value from 1 (Rate) to 5 (Mythic)",
 					required=True,
 					min_length=1,
 					max_length=1
