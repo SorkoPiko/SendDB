@@ -158,6 +158,7 @@ class SendBot(commands.Bot):
 		self.trendingChannel = None
 		self.trendingMessageID = previous_data.get("trending_message", None)
 		self.trendingMessage = None
+		self.synced = False
 
 	async def on_ready(self):
 		await self.wait_until_ready()
