@@ -158,8 +158,6 @@ class SendBot(commands.Bot):
 		self.trendingChannel = None
 		self.trendingMessageID = previous_data.get("trending_message", None)
 		self.trendingMessage = None
-		self.update_trending_message.start()
-		self.weekly_mod_reminder.start()  # Start the weekly moderator reminder task
 
 	async def on_ready(self):
 		await self.wait_until_ready()
@@ -175,6 +173,8 @@ class SendBot(commands.Bot):
 		self.trendingChannel = (self.get_channel(int(environ.get('TRENDING_CHANNEL_ID'))) or await self.fetch_channel(int(environ.get('TRENDING_CHANNEL_ID'))))
 		if self.trendingChannel:
 			self.update_trending_message.start()
+		self.weekly_mod_reminder.start()  # Start the weekly moderator reminder task
+
 
 		checker.start(asyncio.get_running_loop())
 		print(f"We have logged in as {self.user}.")
