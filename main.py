@@ -788,6 +788,10 @@ class ModReviewView(View):
 			
 			# Create modal for both difficulty and rating inputs
 			class RatingModal(discord.ui.Modal, title=f"Rate Level"):
+				def __init__(self, outer_view):
+					super().__init__()
+					self.outer_view = outer_view
+				
 				difficulty = discord.ui.TextInput(
 					label="Difficulty from 1 (Auto) to 10 (Demon)",
 					placeholder="Enter a star value from 1 (Auto) to 10 (Demon)",
@@ -819,8 +823,8 @@ class ModReviewView(View):
 							await interaction.response.send_message("Invalid value. Rating must be 1-5.", ephemeral=True)
 							return
 						
-						# Store the rated level ID
-						rated_level_id = self.current_level_id
+						# Store the rated level ID from the outer view
+						rated_level_id = self.outer_view.current_level_id
 						
 						# Store the moderator's rating with both difficulty and quality rating
 						self.outer_view.db.add_mod_rating(interaction.user.id, rated_level_id, difficulty_val, rating_val)
@@ -880,10 +884,8 @@ class ModReviewView(View):
 							# Update message reference
 							self.outer_view.message = await interaction.followup.fetch_message()
 			
-			# Set reference to the parent view
-			modal = RatingModal()
-			modal.outer_view = self
-			
+			# Create modal and set reference to the parent view
+			modal = RatingModal(self)
 			await interaction.response.send_modal(modal)
 		
 		@discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, row=1)
@@ -1200,7 +1202,8 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 	# Add a button to suggest ratings if the user hasn't already
 	class CheckLevelView(discord.ui.View):
 		def __init__(self):
-			super().__init__(timeout=300)
+			super().__init__(timeout=300)  # 5 minute timeout
+			self.message = None
 			
 		@discord.ui.button(label="Suggest Rating", style=discord.ButtonStyle.primary)
 		async def suggest_button(self, interaction: discord.Interaction, button: Button):
@@ -1246,15 +1249,54 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 						)
 					except ValueError:
 						await interaction.response.send_message("Please enter valid numbers for difficulty and rating.", ephemeral=True)
+					except discord.errors.HTTPException as e:
+						# Handle expired token
+						if e.code == 50027:  # Invalid Webhook Token
+							# Create a new view with a new token
+							new_view = CheckLevelView()
+							await interaction.followup.send(
+								f"Your suggestion for **{levelData['name']}** has been recorded, but the session expired. Use this new button if needed.",
+								view=new_view,
+								ephemeral=True
+							)
+							new_view.message = await interaction.followup.fetch_message()
 			
-			await interaction.response.send_modal(SuggestRatingModal())
-	
+			try:
+				# Send the modal to the user
+				modal = SuggestRatingModal()
+				await interaction.response.send_modal(modal)
+			except discord.errors.HTTPException as e:
+				# Handle expired token
+				if e.code == 50027:  # Invalid Webhook Token
+					# Create a new view and send a new message
+					new_view = CheckLevelView()
+					embed = discord.Embed(
+						title=f"Level: {levelData['name']}",
+						description=f"The previous view expired. Use this new button to suggest a rating.",
+						color=0x00ff00
+					)
+					await interaction.followup.send(embed=embed, view=new_view, ephemeral=True)
+					new_view.message = await interaction.followup.fetch_message()
+		
+		async def on_timeout(self):
+			# Disable the button when the view times out
+			if self.message:
+				for child in self.children:
+					child.disabled = True
+				try:
+					await self.message.edit(view=self)
+				except discord.errors.HTTPException:
+					# If edit fails due to token expiry, just pass
+					# We can't do much at this point since we can't interact with the user
+					pass
+
 	view = CheckLevelView()
 	await interaction.response.send_message(
 		content='⚠️ **WARNING**: This level was created before the bot started tracking levels. The data may be inaccurate.' if level_id < OLDEST_LEVEL else '', 
 		embed=embed,
 		view=view
 	)
+	view.message = await interaction.original_response()
 
 @client.tree.command(name="leaderboard", description="Show the send leaderboard.")
 async def leaderboard(interaction: discord.Interaction):
