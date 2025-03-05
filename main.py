@@ -1,17 +1,14 @@
-import asyncio, math
-import logging
-import sys
+import asyncio
 from dotenv import load_dotenv
 from os import environ
 import discord, os, json, re, git
 from discord.ext import commands, tasks
 from discord.ui import Button, View
 from discord import app_commands
-from datetime import datetime, timezone, timedelta, UTC
+from datetime import datetime, timedelta, UTC
 from math import ceil
 from enum import Enum
-from typing import Literal, Optional, Union, Dict, List, Tuple
-from mongoengine.errors import ValidationError
+from typing import Literal
 
 from db import SendDB
 from utils import SentChecker
