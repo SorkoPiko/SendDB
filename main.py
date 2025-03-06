@@ -1036,12 +1036,16 @@ class CheckLevelView(discord.ui.View):
 	def __init__(self, levelData: dict):
 		super().__init__(timeout=300)  # 5 minute timeout
 		self.message = None
-		self.levelData = levelData
+		self.levelData: dict = levelData
 		
 	@discord.ui.button(label="Suggest Rating", style=discord.ButtonStyle.primary)
 	async def suggest_button(self, interaction: discord.Interaction, button: Button):
 		# Create a modal for rating input
 		class SuggestRatingModal(discord.ui.Modal, title=f"Rate Level: {self.levelData['name']}"):
+			def __init__(self, outer_view):
+				super().__init__()
+				self.outer_view = outer_view
+			
 			difficulty = discord.ui.TextInput(
 				label="Difficulty from 1 (Auto) to 10 (Demon)",
 				placeholder="Enter a star value from 1 (Auto) to 10 (Demon)",
@@ -1068,13 +1072,13 @@ class CheckLevelView(discord.ui.View):
 						return
 					
 					# Store the user's suggestion
-					db.add_user_suggestion(interaction.user.id, self.levelData["id"], difficulty_val, rating_val)
+					db.add_user_suggestion(interaction.user.id, self.outer_view.levelData["id"], difficulty_val, rating_val)
 					
 					# Get user weight info
 					weight_info = db.get_user_weight(interaction.user.id)
 					
 					await interaction.response.send_message(
-						f"Your suggestion for **{self.levelData['name']}** has been recorded.\n\n"
+						f"Your suggestion for **{self.outer_view.levelData['name']}** has been recorded.\n\n"
 						f"**Difficulty:** {DIFFICULTIES[difficulty_val]}\n"
 						f"**Rating:** {RATINGS[rating_val]}\n\n"
 						f"Your suggestion weight: **{weight_info['weight']:.2f}**",
@@ -1086,9 +1090,9 @@ class CheckLevelView(discord.ui.View):
 					# Handle expired token
 					if e.code == 50027:  # Invalid Webhook Token
 						# Create a new view with a new token
-						new_view = CheckLevelView()
+						new_view = CheckLevelView(self.outer_view.levelData)
 						await interaction.followup.send(
-							f"Your suggestion for **{self.levelData['name']}** has been recorded, but the session expired. Use this new button if needed.",
+							f"Your suggestion for **{self.outer_view.levelData['name']}** has been recorded, but the session expired. Use this new button if needed.",
 							view=new_view,
 							ephemeral=True
 						)
@@ -1096,13 +1100,13 @@ class CheckLevelView(discord.ui.View):
 		
 		try:
 			# Send the modal to the user
-			modal = SuggestRatingModal()
+			modal = SuggestRatingModal(self)
 			await interaction.response.send_modal(modal)
 		except discord.errors.HTTPException as e:
 			# Handle expired token
 			if e.code == 50027:  # Invalid Webhook Token
 				# Create a new view and send a new message
-				new_view = CheckLevelView()
+				new_view = CheckLevelView(self.levelData)
 				embed = discord.Embed(
 					title=f"Level: {self.levelData['name']}",
 					description=f"The previous view expired. Use this new button to suggest a rating.",

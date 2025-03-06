@@ -832,3 +832,14 @@ class SendDB:
 		# If moderator not found in results, they haven't reviewed any levels
 		return 0
 		
+	def set_stat(self, stat: str, value: int):
+		stats = self.get_collection("data", "stats")
+		stats.update_one({"_id": stat}, {"$set": {"value": value}}, upsert=True)
+
+	def increase_stat(self, stat: str, amount: int = 1):
+		stats = self.get_collection("data", "stats")
+		stats.update_one({"_id": stat}, {"$inc": {"value": amount}}, upsert=True)
+
+	def get_stat(self, stat: str) -> int:
+		stats = self.get_collection("data", "stats")
+		return stats.find_one({"_id": stat})["value"]
