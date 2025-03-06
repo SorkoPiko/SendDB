@@ -820,8 +820,8 @@ class ModReviewView(View):
 		# Add weighted average information
 		embed.add_field(
 			name="Weighted Suggestion Average",
-			value=f"**Difficulty:** {weighted_avg['difficulty']}/10 ({DIFFICULTIES[weighted_avg['difficulty']]})\n"
-					f"**Rating:** {weighted_avg['rating']}/5 ({RATINGS[weighted_avg['rating']]})",
+			value=f"**Difficulty:** {weighted_avg['difficulty']}/10 ({DIFFICULTIES[round(weighted_avg['difficulty'])]})\n"
+					f"**Rating:** {weighted_avg['rating']}/5 ({RATINGS[round(weighted_avg['rating'])]})",
 			inline=False
 		)
 		
@@ -1322,8 +1322,8 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 		embed.add_field(
 			name="User Suggestions",
 			value=f"**Count:** {suggestion_data['suggestion_count']}\n"
-				  f"**Avg Difficulty:** {suggestion_data['difficulty']}/10 ({DIFFICULTIES[suggestion_data['difficulty']]})\n"
-				  f"**Avg Rating:** {suggestion_data['rating']}/5 ({RATINGS[suggestion_data['rating']]})",
+				  f"**Avg Difficulty:** {suggestion_data['difficulty']}/10 ({DIFFICULTIES[round(suggestion_data['difficulty'])]})\n"
+				  f"**Avg Rating:** {suggestion_data['rating']}/5 ({RATINGS[round(suggestion_data['rating'])]})",
 			inline=True
 		)
 	
@@ -1341,8 +1341,8 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 			rating_text = f"**Count:** {len(mod_ratings)} ({rejected_count} rejections)\n"
 			
 			if approved_ratings:
-				rating_text += f"**Avg Difficulty:** {avg_difficulty:.1f}/10 ({DIFFICULTIES[avg_difficulty]})\n" \
-							  f"**Avg Rating:** {avg_rating:.1f}/5 ({RATINGS[avg_rating]})"
+				rating_text += f"**Avg Difficulty:** {avg_difficulty:.1f}/10 ({DIFFICULTIES[round(avg_difficulty)]})\n" \
+							  f"**Avg Rating:** {avg_rating:.1f}/5 ({RATINGS[round(avg_rating)]})"
 			
 			if rejected_count > 0:
 				rating_text += f"\n**Note:** {rejected_count} moderator{'s' if rejected_count == 1 else 's'} rejected this level"
