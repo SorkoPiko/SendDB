@@ -1419,15 +1419,15 @@ Support Server: [SendDB](https://discord.gg/{invite})
 async def suggest_level(
 	interaction: discord.Interaction, 
 	level_id: int, 
-	difficulty: Literal["Auto (1⭐)", "Easy (2⭐)", "Normal (3⭐)", "Hard (4⭐)", "Hard (5⭐)", 
-                     "Harder (6⭐)", "Harder (7⭐)", "Insane (8⭐)", "Insane (9⭐)", "Demon (10⭐)"],
+	difficulty: Literal["Auto 1⭐", "Easy 2⭐", "Normal 3⭐", "Hard 4⭐", "Hard 5⭐", 
+                     "Harder 6⭐", "Harder 7⭐", "Insane 8⭐", "Insane 9⭐", "Demon 10⭐"],
 	rating: Literal["Rate", "Feature", "Epic", "Legendary", "Mythic"]
 ):
 	# Convert difficulty string to numeric value
-	difficulty_value = next((k for k, v in DIFFICULTIES.items() if v == difficulty), 5)
+	difficulty_value = next((k for k, v in DIFFICULTIES.items() if v == difficulty))
 	
 	# Convert rating string to numeric value
-	rating_value = next((k for k, v in RATINGS.items() if v == rating), 1)
+	rating_value = next((k for k, v in RATINGS.items() if v == rating))
 	
 	# Store the user's suggestion
 	db.add_user_suggestion(interaction.user.id, level_id, difficulty_value, rating_value)
