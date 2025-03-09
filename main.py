@@ -267,7 +267,7 @@ class SendBot(commands.Bot):
 	async def weekly_mod_reminder(self):
 		"""Send weekly reminders to moderators about pending level suggestions."""
 		# Only send reminder on Sundays
-		if datetime.utcnow().weekday() != 6:  # 6 is Sunday (0 is Monday)
+		if datetime.now(UTC).weekday() != 6:  # 6 is Sunday (0 is Monday)
 			return
             
 		# Get all moderators
