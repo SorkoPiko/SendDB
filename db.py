@@ -164,6 +164,22 @@ class SendDB:
 			{"_id": 1, "name": 1, "accountID": 1}
 		).limit(25))
 
+	def search_levels(self, query: str) -> list[dict]:
+		"""
+		Search for levels by name.
+		
+		Args:
+			query: The search term to look for in level names
+			
+		Returns:
+			list: A list of matching level dictionaries with id and name
+		"""
+		levels = self.get_collection("data", "info")
+		return list(levels.find(
+			{"name": {"$regex": f"{query}", "$options": "i"}},
+			{"_id": 1, "name": 1}
+		).sort("name", 1).limit(25))
+
 	def get_trending_levels(self, skip: int = 0, limit: int = 10, get_total: bool = False) -> tuple[list[dict], int]:
 		sends = self.get_collection("data", "sends")
 

@@ -158,7 +158,35 @@ class SendBot(commands.Bot):
 		self.trendingChannel = None
 		self.trendingMessageID = previous_data.get("trending_message", None)
 		self.trendingMessage = None
+		self.update_trending_message.start()
+		self.weekly_mod_reminder.start()  # Start the weekly moderator reminder task
 		self.synced = False
+
+	async def setup_hook(self):
+		"""This method is called before on_ready to set up initial things"""
+		# Set up error handler for app commands
+		self.tree.on_error = self.on_app_command_error
+		
+	async def on_app_command_completion(self, interaction: discord.Interaction, command: app_commands.Command):
+		"""Event that triggers when a command is successfully executed"""
+		# Increment the commands run counter in the database
+		db.increase_stat("commands")
+		
+		# Optional: You can add more detailed stats if needed
+		command_name = command.qualified_name
+		db.increase_stat(f"command_{command_name}")
+		
+	async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+		"""Event that triggers when a command encounters an error"""
+		# Log the error somewhere if you want to track it
+		print(f"Command error: {error}")
+		
+		# Notify the user if they haven't already been responded to
+		if not interaction.response.is_done():
+			await interaction.response.send_message(
+				"There was an error executing this command. Please try again later.",
+				ephemeral=True
+			)
 
 	async def on_ready(self):
 		await self.wait_until_ready()
@@ -1036,7 +1064,7 @@ class CheckLevelView(discord.ui.View):
 	def __init__(self, levelData: dict):
 		super().__init__(timeout=300)  # 5 minute timeout
 		self.message = None
-		self.levelData: dict = levelData
+		self.levelData = levelData
 		
 	@discord.ui.button(label="Suggest Rating", style=discord.ButtonStyle.primary)
 	async def suggest_button(self, interaction: discord.Interaction, button: Button):
@@ -1127,23 +1155,34 @@ class CheckLevelView(discord.ui.View):
 				# We can't do much at this point since we can't interact with the user
 				pass
 
+# Helper function to extract ID from a string (used for autocompletes)
+def extract_id(input_string):
+	"""Extract a numeric ID from a string that might contain a name and ID"""
+	if match := re.search(r'\((\d+)\)', input_string):
+		return int(match.group(1))
+
+	if match := re.search(r'(\d+)$', input_string):
+		return int(match.group(1))
+
+	if input_string.isdigit():
+		return int(input_string)
+
+	return None
+
+# Autocomplete function for levels
+async def level_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+	if not current:
+		return []
+	levels = db.search_levels(current)
+	return [
+		app_commands.Choice(name=f"{level['name']} ({level['_id']})", value=str(level['_id']))
+		for level in levels
+	][:25]
+
 class FollowCommands(commands.GroupCog, name="follow"):
 	def __init__(self, bot: commands.Bot):
 		self.bot = bot
 		super().__init__()
-
-	@staticmethod
-	def extract_id(creator_string):
-		if match := re.search(r'\((\d+)\)', creator_string):
-			return int(match.group(1))
-
-		if match := re.search(r'(\d+)$', creator_string):
-			return int(match.group(1))
-
-		if creator_string.isdigit():
-			return int(creator_string)
-
-		return ''
 
 	async def creator_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
 		if not current or '(' in current:
@@ -1157,7 +1196,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
 	@app_commands.command(name="creator", description="Follow a creator to get DM notifications when their levels are sent")
 	@app_commands.autocomplete(creator=creator_autocomplete)
 	async def follow_creator(self, interaction: discord.Interaction, creator: str):
-		creator_id = self.extract_id(creator)
+		creator_id = extract_id(creator)
 
 		# Verify creator exists
 		creators = db.get_creators([creator_id])
@@ -1276,25 +1315,34 @@ async def subscribe(interaction: discord.Interaction):
 	await interaction.response.send_message("✅ Subscribed to level send notifications.",ephemeral=True)
 
 @client.tree.command(name="check-level", description="Check a level's sends.")
-@app_commands.describe(level_id="The level's ID.")
-async def check_level(interaction: discord.Interaction, level_id: int):
-	sendData = db.get_sends([level_id])
-	if level_id not in sendData:
-		await interaction.response.send_message(f"{'⚠️ **WARNING**: This level was created before the bot started tracking levels. Any sends before the bot started operating have not been counted.\n\n' if level_id < OLDEST_LEVEL else ''}❌ Level `{level_id}` has no sends.", ephemeral=True)
+@app_commands.describe(level_id="Enter a level name or ID to check its sends")
+@app_commands.autocomplete(level_id=level_autocomplete)
+async def check_level(interaction: discord.Interaction, level_id: str):
+	# Extract the numeric ID from the input
+	level_numeric_id = extract_id(level_id)
+	
+	if level_numeric_id is None:
+		await interaction.response.send_message(f"❌ Invalid level ID: `{level_id}`. Please provide a valid level ID or select from the autocomplete list.", ephemeral=True)
 		return
-	sendCount = sendData[level_id]["count"]
-	lastSend: datetime = sendData[level_id]["latest_timestamp"]
+		
+	sendData = db.get_sends([level_numeric_id])
+	if level_numeric_id not in sendData:
+		await interaction.response.send_message(f"{'⚠️ **WARNING**: This level was created before the bot started tracking levels. Any sends before the bot started operating have not been counted.\n\n' if level_numeric_id < OLDEST_LEVEL else ''}❌ Level `{level_numeric_id}` has no sends.", ephemeral=True)
+		return
+	sendCount = sendData[level_numeric_id]["count"]
+	lastSend: datetime = sendData[level_numeric_id]["latest_timestamp"]
 
-	infoData = db.get_info([level_id])
-	if level_id not in infoData:
+	infoData = db.get_info([level_numeric_id])
+	if level_numeric_id not in infoData:
 		levelData = {
-			"_id": level_id,
-			"name": level_id
+			"id": level_numeric_id,
+			"name": str(level_numeric_id)
 		}
 		creatorString = ""
 
 	else:
-		levelData = infoData[level_id]
+		levelData = infoData[level_numeric_id]
+		levelData["id"] = level_numeric_id  # Ensure the ID is included for the view
 		creatorData = db.get_creators([levelData["creator"]])
 
 		if levelData["creator"] not in creatorData:
@@ -1307,14 +1355,14 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 			creatorString = f"By **{levelData['creatorName']}** ({levelData['creator']})\n"
 
 	# Get suggestion and rating information
-	suggestion_data = db.get_weighted_suggestion_average(level_id)
-	mod_ratings = db.get_mod_ratings(level_id)
+	suggestion_data = db.get_weighted_suggestion_average(level_numeric_id)
+	mod_ratings = db.get_mod_ratings(level_numeric_id)
 	
 	# Create the basic embed
 	embed = discord.Embed(
 		title=f"{levelData['name']}",
-		description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{int(lastSend.timestamp())}:F> (<t:{int(lastSend.timestamp())}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_id}) (`{level_id}`)",
-		color=0x00ff00 if level_id >= OLDEST_LEVEL else 0xff0000
+		description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{int(lastSend.timestamp())}:F> (<t:{int(lastSend.timestamp())}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_numeric_id}) (`{level_numeric_id}`)",
+		color=0x00ff00 if level_numeric_id >= OLDEST_LEVEL else 0xff0000
 	)
 	
 	# Add suggestion data if available
@@ -1359,11 +1407,11 @@ async def check_level(interaction: discord.Interaction, level_id: int):
 	if creatorString:
 		embed.set_author(name=levelData["creatorName"], url=f"https://gdbrowser.com/u/{levelData['accountID']}", icon_url="https://gdbrowser.com/assets/cp.png")
 
-	levelData["id"] = level_id
+	levelData["id"] = level_numeric_id
 
 	view = CheckLevelView(levelData)
 	await interaction.response.send_message(
-		content='⚠️ **WARNING**: This level was created before the bot started tracking levels. The data may be inaccurate.' if level_id < OLDEST_LEVEL else '', 
+		content='⚠️ **WARNING**: This level was created before the bot started tracking levels. The data may be inaccurate.' if level_numeric_id < OLDEST_LEVEL else '', 
 		embed=embed,
 		view=view
 	)
@@ -1383,6 +1431,8 @@ async def trending(interaction: discord.Interaction):
 
 @client.tree.command(name="info", description="Show the bot's info and stats.")
 async def info(interaction: discord.Interaction):
+	commands = db.get_stat("commands")
+	requests = db.get_stat("requests")
 	total_sends = db.get_total_sends()
 	total_creators = db.get_total_creators()
 	total_levels = db.get_total_levels()
@@ -1394,7 +1444,9 @@ async def info(interaction: discord.Interaction):
 		title="Bot Stats",
 		description=f"""
 Total Servers: `{len(client.guilds)}`
-		
+Total Commands Run: `{commands}`
+Total Requests: `{requests}`
+
 Total Sends: `{total_sends}`
 Total Creators: `{total_creators}`
 Total Levels: `{total_levels}`
@@ -1416,13 +1468,19 @@ Support Server: [SendDB](https://discord.gg/{invite})
 	difficulty="The difficulty level of the level",
 	rating="Quality rating for the level"
 )
+@app_commands.autocomplete(level_id=level_autocomplete)
 async def suggest_level(
 	interaction: discord.Interaction, 
-	level_id: int, 
+	level_id: str, 
 	difficulty: Literal["Auto 1⭐", "Easy 2⭐", "Normal 3⭐", "Hard 4⭐", "Hard 5⭐", 
                      "Harder 6⭐", "Harder 7⭐", "Insane 8⭐", "Insane 9⭐", "Demon 10⭐"],
 	rating: Literal["Rate", "Feature", "Epic", "Legendary", "Mythic"]
 ):
+	numeric_id = extract_id(level_id)
+	if numeric_id is None:
+		await interaction.response.send_message("❌ Invalid level ID. Please provide a valid level ID or select from the autocomplete list.", ephemeral=True)
+		return
+
 	# Convert difficulty string to numeric value
 	difficulty_value = next((k for k, v in DIFFICULTIES.items() if v == difficulty))
 	
@@ -1458,7 +1516,7 @@ async def suggest_level(
 				   f"**Rating:** {rating}\n\n"
 				   f"Your suggestion weight: **{weight_info['weight']:.2f}**\n"
 				   f"Your accuracy score: **{weight_info['accuracy'] * 100:.1f}%**\n"
-				   f"Total suggestions: **{weight_info['suggestion_count']}**",
+				   f"Reviewed suggestions: **{weight_info['suggestion_count']}**",
 		color=0x00ff00
 	)
 	

@@ -1,5 +1,6 @@
 import requests, threading, time, asyncio, queue
 from typing import Optional, Callable
+from db import SendDB
 
 class Ratelimited(Exception):
     pass
@@ -8,7 +9,7 @@ class Banned(Exception):
     pass
 
 class SentChecker:
-    def __init__(self, callback: Callable, ban_callback: Optional[Callable] = None):
+    def __init__(self, callback: Callable, ban_callback: Optional[Callable] = None, db: Optional[SendDB] = None):
         self.q: queue.Queue = queue.Queue()
         self.callback = callback
         self.ban_callback = ban_callback
@@ -16,6 +17,7 @@ class SentChecker:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
         self.running = threading.Event()
+        self.db = db
 
     def start(self, loop: asyncio.AbstractEventLoop):
         """Start the worker thread with the given event loop"""
@@ -46,11 +48,13 @@ class SentChecker:
                         break
 
                     levels, creators = self.getSentLevels()
+                    self.db.increase_stat("requests", 1)
 
                     time.sleep(2)
 
                     if username:
                         player_id, account_id = self.check_account(username)
+                        self.db.increase_stat("requests", 1)
                         if self.running.is_set() and self.loop and not self.loop.is_closed():
                             self.loop.call_soon_threadsafe(
                                 lambda: asyncio.create_task(callback(player_id, account_id, *args))
@@ -59,6 +63,7 @@ class SentChecker:
                     time.sleep(3)
 
                     rated_levels = self.getRatedLevels()
+                    self.db.increase_stat("requests", 1)
                     if self.running.is_set() and self.loop and not self.loop.is_closed():
                         self.loop.call_soon_threadsafe(
                             lambda: asyncio.create_task(self.callback(levels, creators, rated_levels))
@@ -90,6 +95,7 @@ class SentChecker:
         }
 
         req = requests.post('http://www.boomlings.com/database/getGJLevels21.php', data=data, headers=headers)
+
 
         if req.text == "error code: 1015": # ratelimited
             print("Ratelimited!")
