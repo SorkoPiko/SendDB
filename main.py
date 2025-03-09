@@ -149,7 +149,7 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 async def sendBanNotification():
 	await client.sendChannel.send("❌ **Bot was IP Banned!**")
 
-checker = SentChecker(onSendResults, sendBanNotification)
+checker = SentChecker(onSendResults, sendBanNotification, db)
 
 class SendBot(commands.Bot):
 	def __init__(self):
@@ -158,8 +158,6 @@ class SendBot(commands.Bot):
 		self.trendingChannel = None
 		self.trendingMessageID = previous_data.get("trending_message", None)
 		self.trendingMessage = None
-		self.update_trending_message.start()
-		self.weekly_mod_reminder.start()  # Start the weekly moderator reminder task
 		self.synced = False
 
 	async def setup_hook(self):
