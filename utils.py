@@ -77,7 +77,7 @@ class SentChecker:
                 time.sleep(60*60)
             except Banned:
                 if self.ban_callback:
-                    self.ban_callback()
+                    asyncio.run_coroutine_threadsafe(self.ban_callback(), self.loop)
                 break
             except Exception as e:
                 print(f"Error in worker thread: {e}")
