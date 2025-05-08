@@ -979,26 +979,12 @@ async def check_level(interaction: discord.Interaction, level_id: str):
 			levelData["accountID"] = creatorData[levelData["creator"]]["accountID"]
 			creatorString = f"By **{levelData['creatorName']}** ({levelData['creator']})\n"
 
-	# Get suggestion and rating information
-	suggestion_data = db.get_weighted_suggestion_average(level_numeric_id)
-	# mod_ratings = db.get_mod_ratings(level_numeric_id)
-	
 	# Create the basic embed
 	embed = discord.Embed(
 		title=f"{levelData['name']}",
 		description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{int(lastSend.timestamp())}:F> (<t:{int(lastSend.timestamp())}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_numeric_id}) (`{level_numeric_id}`)",
 		color=0x00ff00 if level_numeric_id >= OLDEST_LEVEL else 0xff0000
 	)
-	
-	# Add suggestion data if available
-	if suggestion_data["suggestion_count"] > 0:
-		embed.add_field(
-			name="User Suggestions",
-			value=f"**Count:** {suggestion_data['suggestion_count']}\n"
-				  f"**Avg Difficulty:** {suggestion_data['difficulty']}/10 ({DIFFICULTIES[round(suggestion_data['difficulty'])]})\n"
-				  f"**Avg Rating:** {suggestion_data['rating']}/5 ({RATINGS[round(suggestion_data['rating'])]})",
-			inline=True
-		)
 
 	if creatorString:
 		embed.set_author(name=levelData["creatorName"], url=f"https://gdbrowser.com/u/{levelData['accountID']}", icon_url="https://gdbrowser.com/assets/cp.png")
