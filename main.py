@@ -43,7 +43,7 @@ async def is_moderator(interaction: discord.Interaction) -> bool:
 	# Check if the user is in the moderators collection
 	if db.is_moderator(interaction.user.id):
 		return True
-	
+
 	# If not a moderator, let them know
 	await interaction.response.send_message("You don't have permission to use this command. Only moderators can use it.", ephemeral=True)
 	return False
@@ -164,21 +164,21 @@ class SendBot(commands.Bot):
 		"""This method is called before on_ready to set up initial things"""
 		# Set up error handler for app commands
 		self.tree.on_error = self.on_app_command_error
-		
+
 	async def on_app_command_completion(self, interaction: discord.Interaction, command: app_commands.Command):
 		"""Event that triggers when a command is successfully executed"""
 		# Increment the commands run counter in the database
 		db.increase_stat("commands")
-		
+
 		# Optional: You can add more detailed stats if needed
 		command_name = command.qualified_name
 		db.increase_stat(f"command_{command_name}")
-		
+
 	async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
 		"""Event that triggers when a command encounters an error"""
 		# Log the error somewhere if you want to track it
 		print(f"Command error: {error}")
-		
+
 		# Notify the user if they haven't already been responded to
 		if not interaction.response.is_done():
 			await interaction.response.send_message(
@@ -269,22 +269,22 @@ class SendBot(commands.Bot):
 		# Only send reminder on Sundays
 		if datetime.now(UTC).weekday() != 6:  # 6 is Sunday (0 is Monday)
 			return
-            
+
 		# Get all moderators
 		moderators = db.get_all_moderators()
 		if not moderators:
 			return
-            
+
 		# Send a personalized message to each moderator
 		for mod in moderators:
 			try:
 				# Get count specific to this moderator
 				mod_id = mod["discord_id"]
 				mod_pending_count = db.get_pending_suggestion_count(mod_id)
-                
+
 				if mod_pending_count <= 0:
 					continue  # Skip if this moderator has already reviewed all levels
-                    
+
 				command_id = await self.get_command_id("pending-suggestions")
 				content = f"</pending-suggestions:{command_id}>" if command_id else "/pending-suggestions"
 
@@ -294,7 +294,7 @@ class SendBot(commands.Bot):
 					description=f"There are **{mod_pending_count}** level suggestions waiting for your review. Use {content} to start reviewing.",
 					color=0x00aaff
 				)
-                
+
 				mod_position = db.get_moderator_position(mod_id)
 
 				if mod_position > 0:
@@ -305,7 +305,7 @@ class SendBot(commands.Bot):
 					)
 
 				embed.set_footer(text="This is a weekly reminder for moderators to review pending suggestions.")
-                
+
 				# Send DM to the moderator
 				user = await self.fetch_user(mod_id)
 				await user.send(embed=embed)
@@ -313,14 +313,14 @@ class SendBot(commands.Bot):
 				continue
 			except Exception as e:
 				print(f"Error sending reminder to moderator {mod.get('discord_id')}: {e}")
-                
+
 		print(f"Sent weekly reminders to moderators about pending suggestions")
 
 	@weekly_mod_reminder.before_loop
 	async def before_reminder(self):
 		"""Wait until the bot is ready before starting the reminder loop."""
 		await self.wait_until_ready()
-            
+
 		# If we're not on Sunday, wait until next Sunday
 		now = datetime.now(UTC)
 		days_until_sunday = (6 - now.weekday()) % 7  # Days until next Sunday
@@ -328,10 +328,10 @@ class SendBot(commands.Bot):
 			# Wait until next Sunday at 15:00 UTC (a good time for most regions)
 			next_sunday = now + timedelta(days=days_until_sunday)
 			target_time = datetime(
-				next_sunday.year, next_sunday.month, next_sunday.day, 
+				next_sunday.year, next_sunday.month, next_sunday.day,
 				15, 0, 0  # 15:00 UTC
 			)
-			await asyncio.sleep((target_time - now).total_seconds())
+			await asyncio.sleep((target_time - now.replace(tzinfo=UTC)).total_seconds())
 
 client = SendBot()
 
@@ -946,11 +946,11 @@ async def subscribe(interaction: discord.Interaction):
 async def check_level(interaction: discord.Interaction, level_id: str):
 	# Extract the numeric ID from the input
 	level_numeric_id = extract_id(level_id)
-	
+
 	if level_numeric_id is None:
 		await interaction.response.send_message(f"❌ Invalid level ID: `{level_id}`. Please provide a valid level ID or select from the autocomplete list.", ephemeral=True)
 		return
-		
+
 	sendData = db.get_sends([level_numeric_id])
 	if level_numeric_id not in sendData:
 		await interaction.response.send_message(f"{'⚠️ **WARNING**: This level was created before the bot started tracking levels. Any sends before the bot started operating have not been counted.\n\n' if level_numeric_id < OLDEST_LEVEL else ''}❌ Level `{level_numeric_id}` has no sends.", ephemeral=True)
@@ -993,7 +993,7 @@ async def check_level(interaction: discord.Interaction, level_id: str):
 	levelData["id"] = level_numeric_id
 
 	await interaction.response.send_message(
-		content='⚠️ **WARNING**: This level was created before the bot started tracking levels. The data may be inaccurate.' if level_numeric_id < OLDEST_LEVEL else '', 
+		content='⚠️ **WARNING**: This level was created before the bot started tracking levels. The data may be inaccurate.' if level_numeric_id < OLDEST_LEVEL else '',
 		embed=embed
 	)
 
