@@ -925,7 +925,8 @@ async def sendMessage(info: list[dict], timestamp: datetime):
 	await message.publish()
 
 @client.tree.command(name="subscribe", description="Subscribe this channel to level send notifications.")
-@commands.has_permissions(manage_channels=True)
+@app_commands.describe()
+@app_commands.default_permissions(manage_channels=True)
 async def subscribe(interaction: discord.Interaction):
 	if client.sendChannel is None:
 		await interaction.response.send_message("❌ Internal error.", ephemeral=True)
