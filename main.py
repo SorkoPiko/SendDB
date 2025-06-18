@@ -1,7 +1,6 @@
-import asyncio
+import discord, os, json, re, git, asyncio, logging
 from dotenv import load_dotenv
 from os import environ
-import discord, os, json, re, git
 from discord.ext import commands, tasks
 from discord.ui import Button, View
 from discord import app_commands
@@ -12,6 +11,12 @@ from typing import Literal
 
 from db import SendDB
 from utils import SentChecker
+
+logging.basicConfig(
+	filename='exceptions.log',  # File to save exceptions
+	level=logging.ERROR,        # Log level
+	format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 load_dotenv()
 db = SendDB(f"mongodb+srv://{environ.get('MONGO_USERNAME')}:{environ.get('MONGO_PASSWORD')}@{environ.get('MONGO_ENDPOINT')}")
@@ -205,6 +210,18 @@ class SendBot(commands.Bot):
 
 		checker.start(asyncio.get_running_loop())
 		print(f"We have logged in as {self.user}.")
+
+	async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+		"""Event that triggers when a command encounters an error"""
+		# Log the error to the file
+		logging.error("Command error occurred", exc_info=error)
+
+		# Notify the user if they haven't already been responded to
+		if not interaction.response.is_done():
+			await interaction.response.send_message(
+				"There was an error executing this command. Please try again later.",
+				ephemeral=True
+		)
 
 	async def close(self):
 		checker.stop()
