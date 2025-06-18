@@ -1,3 +1,5 @@
+from tabnanny import check
+
 import discord, os, json, re, git, asyncio, logging
 from dotenv import load_dotenv
 from os import environ
@@ -844,14 +846,18 @@ class FollowCommands(commands.GroupCog, name="follow"):
 		creators = db.get_creators([creator_id])
 		if creator_id not in creators:
 			if not creator.isdigit():
+				if checker.is_user_pending(interaction.user.id):
+					await interaction.response.send_message("You already have a pending creator check. Please wait for it to complete.", ephemeral=True)
+					return
 				# Try to find creator by name
 				async def callback(username: str, player_id: int, account_id: int):
 					db.add_creators([{"_id": player_id, "name": username, "accountID": account_id}])
 					db.add_follow(interaction.user.id, "creator", player_id)
 					await interaction.followup.send(f"✅ Now following **{username}** with ID: `{player_id}`", ephemeral=True)
 
-				await interaction.response.defer(ephemeral=True)
-				checker.queue_check(creator, callback)
+				timeNow = int(datetime.now(UTC).timestamp())
+				checker.queue_check(creator, callback, interaction.user.id)
+				await interaction.response.send(f"🔍 Checking creator `{creator}` (Ready <t:{timeNow+checker.approximate_wait_time(interaction.user.id)}:R>)...", ephemeral=True)
 				return
 
 			await interaction.response.send_message(f"❌ Creator `{creator}` not found", ephemeral=True)

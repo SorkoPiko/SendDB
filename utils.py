@@ -11,6 +11,7 @@ class Banned(Exception):
 class SentChecker:
     def __init__(self, callback: Callable, ban_callback: Optional[Callable] = None, db: Optional[SendDB] = None):
         self.q: queue.Queue = queue.Queue()
+        self.pending_checks: dict[str, list[Callable]] = {}
         self.callback = callback
         self.ban_callback = ban_callback
         self.lock = threading.Lock()
@@ -38,9 +39,9 @@ class SentChecker:
     def worker(self):
         while self.running.is_set():
             try:
-                username, callback, *args = self.q.get(timeout=1)
+                username = self.q.get(timeout=1)
             except queue.Empty:
-                username, callback, *args = None, None, []
+                username = None
 
             try:
                 with self.lock:
@@ -53,12 +54,14 @@ class SentChecker:
                     time.sleep(2)
 
                     if username:
+                        callbacks = self.pending_checks.pop(username, [])
                         player_id, account_id = self.check_account(username)
                         self.db.increase_stat("requests", 1)
-                        if self.running.is_set() and self.loop and not self.loop.is_closed():
-                            self.loop.call_soon_threadsafe(
-                                lambda: asyncio.create_task(callback(player_id, account_id, *args))
-                            )
+                        for callback, args in callbacks:
+                            if self.running.is_set() and self.loop and not self.loop.is_closed():
+                                self.loop.call_soon_threadsafe(
+                                    lambda: asyncio.create_task(callback(player_id, account_id, *args))
+                                )
 
                     time.sleep(3)
 
@@ -184,6 +187,34 @@ class SentChecker:
 
         return pairs[1], int(pairs[2]), int(pairs[16])
 
-    def queue_check(self, username, callback, *args):
-        if self.running.is_set():
-            self.q.put((username, callback, *args))
+    def queue_check(self, username: str, callback: Callable, user: int, *args):
+        """Queue a username for checking, avoiding duplicates."""
+        with self.lock:
+            if username in self.pending_checks:
+                # Add the callback to the existing list
+                self.pending_checks[username].append((callback, args, user))
+            else:
+                # Add a new entry and queue the username
+                self.pending_checks[username] = [(callback, args, user)]
+                self.q.put(username)
+
+    def is_user_pending(self, checkUser: int):
+        """Check if a user is already pending."""
+        with self.lock:
+            for callbacks in self.pending_checks.values():
+                for _, _, user in callbacks:
+                    if user == checkUser:
+                        return True
+        return False
+
+    def approximate_wait_time(self, user: int) -> float:
+        """Estimate the approximate wait time based on the number of pending checks."""
+        waitTime = 15
+        with self.lock:
+            for username, callbacks in self.pending_checks.items():
+                for _, _, checkUser in callbacks:
+                    if checkUser == user:
+                        break
+                waitTime += 10
+
+        return waitTime
