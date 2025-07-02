@@ -59,7 +59,7 @@ class SentChecker:
                         callbacks = self.pending_checks.pop(username, [])
                         username, player_id, account_id = self.check_account(username)
                         self.db.increase_stat("requests", 1)
-                        for callback, args in callbacks:
+                        for callback, args, _ in callbacks:
                             if self.running.is_set() and self.loop and not self.loop.is_closed():
                                 self.loop.call_soon_threadsafe(
                                     lambda: asyncio.create_task(callback(username, player_id, account_id, *args))

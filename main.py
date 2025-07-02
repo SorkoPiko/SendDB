@@ -778,6 +778,9 @@ class FollowCommands(commands.GroupCog, name="follow"):
 				if checker.is_user_pending(interaction.user.id):
 					await interaction.response.send_message("You already have a pending creator check. Please wait for it to complete.", ephemeral=True)
 					return
+
+				await interaction.response.defer(ephemeral=True)
+
 				# Try to find creator by name
 				async def callback(username: str, player_id: int, account_id: int):
 					if username == "" and player_id == 0 and account_id == 0:
@@ -789,7 +792,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
 
 				timeNow = int(datetime.now(UTC).timestamp())
 				checker.queue_check(creator, callback, interaction.user.id)
-				await interaction.response.send_message(f"🔍 Checking creator `{creator}` (Ready <t:{timeNow+checker.approximate_wait_time(interaction.user.id)}:R>)...", ephemeral=True)
+				await interaction.followup.send(f"🔍 Checking creator `{creator}` (Ready <t:{timeNow+checker.approximate_wait_time(interaction.user.id)}:R>)...", ephemeral=True)
 				return
 
 			await interaction.response.send_message(f"❌ Creator `{creator}` not found", ephemeral=True)
