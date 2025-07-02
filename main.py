@@ -769,6 +769,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
 	@app_commands.command(name="creator", description="Follow a creator to get DM notifications when their levels are sent")
 	@app_commands.autocomplete(creator=creator_autocomplete)
 	async def follow_creator(self, interaction: discord.Interaction, creator: str):
+		await interaction.response.defer(ephemeral=True)
 		creator_id = extract_id(creator)
 
 		# Verify creator exists
@@ -776,10 +777,8 @@ class FollowCommands(commands.GroupCog, name="follow"):
 		if creator_id not in creators:
 			if not creator.isdigit():
 				if checker.is_user_pending(interaction.user.id):
-					await interaction.response.send_message("You already have a pending creator check. Please wait for it to complete.", ephemeral=True)
+					await interaction.followup.send("You already have a pending creator check. Please wait for it to complete.", ephemeral=True)
 					return
-
-				await interaction.response.defer(ephemeral=True)
 
 				# Try to find creator by name
 				async def callback(username: str, player_id: int, account_id: int):
@@ -795,11 +794,11 @@ class FollowCommands(commands.GroupCog, name="follow"):
 				await interaction.followup.send(f"🔍 Checking creator `{creator}` (Ready <t:{timeNow+checker.approximate_wait_time(interaction.user.id)}:R>)...", ephemeral=True)
 				return
 
-			await interaction.response.send_message(f"❌ Creator `{creator}` not found", ephemeral=True)
+			await interaction.followup.send(f"❌ Creator `{creator}` not found", ephemeral=True)
 			return
 
 		db.add_follow(interaction.user.id, "creator", creator_id)
-		await interaction.response.send_message(f"✅ Now following **{creators[creator_id]['name']}**", ephemeral=True)
+		await interaction.followup.send(f"✅ Now following **{creators[creator_id]['name']}**", ephemeral=True)
 
 	@app_commands.command(name="level", description="Follow a level to get DM notifications when it is sent")
 	async def follow_level(self, interaction: discord.Interaction, level_id: int):
