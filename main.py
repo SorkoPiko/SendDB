@@ -216,7 +216,7 @@ class SendBot(commands.Bot):
 	async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
 		"""Event that triggers when a command encounters an error"""
 		# Log the error to the file
-		logging.error("Command error occurred", exc_info=error)
+		logging.error(f"Command error occurred for user {interaction.user.id}", exc_info=error)
 
 		# Notify the user if they haven't already been responded to
 		if not interaction.response.is_done():
@@ -815,7 +815,7 @@ def extract_id(input_string):
 
 # Autocomplete function for levels
 async def level_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-	if not current:
+	if not current or '(' in current or len(current) > 20:
 		return []
 	levels = db.search_levels(current)
 	return [
@@ -829,7 +829,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
 		super().__init__()
 
 	async def creator_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-		if not current or '(' in current:
+		if not current or '(' in current or len(current) > 16:
 			return []
 		creators = db.search_creators(current)
 		return [
@@ -857,7 +857,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
 
 				timeNow = int(datetime.now(UTC).timestamp())
 				checker.queue_check(creator, callback, interaction.user.id)
-				await interaction.response.send(f"🔍 Checking creator `{creator}` (Ready <t:{timeNow+checker.approximate_wait_time(interaction.user.id)}:R>)...", ephemeral=True)
+				await interaction.response.send_message(f"🔍 Checking creator `{creator}` (Ready <t:{timeNow+checker.approximate_wait_time(interaction.user.id)}:R>)...", ephemeral=True)
 				return
 
 			await interaction.response.send_message(f"❌ Creator `{creator}` not found", ephemeral=True)
@@ -951,6 +951,10 @@ async def sendMessage(info: list[dict], timestamp: datetime):
 @app_commands.describe()
 @app_commands.default_permissions(manage_channels=True)
 async def subscribe(interaction: discord.Interaction):
+	if not isinstance(interaction.channel, discord.TextChannel):
+		await interaction.response.send_message("❌ This command can only be used in text channels.", ephemeral=True)
+		return
+
 	if client.sendChannel is None:
 		await interaction.response.send_message("❌ Internal error.", ephemeral=True)
 		return
