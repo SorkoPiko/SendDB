@@ -207,7 +207,6 @@ class SendBot(commands.Bot):
 		self.trendingChannel = (self.get_channel(int(environ.get('TRENDING_CHANNEL_ID'))) or await self.fetch_channel(int(environ.get('TRENDING_CHANNEL_ID'))))
 		if self.trendingChannel:
 			self.update_trending_message.start()
-		self.weekly_mod_reminder.start()  # Start the weekly moderator reminder task
 
 
 		checker.start(asyncio.get_running_loop())
@@ -281,76 +280,6 @@ class SendBot(commands.Bot):
 
 		except Exception as e:
 			print(f"Error updating trending message: {e}")
-
-	@tasks.loop(hours=24)
-	async def weekly_mod_reminder(self):
-		"""Send weekly reminders to moderators about pending level suggestions."""
-		# Only send reminder on Sundays
-		if datetime.now(UTC).weekday() != 6:  # 6 is Sunday (0 is Monday)
-			return
-
-		# Get all moderators
-		moderators = db.get_all_moderators()
-		if not moderators:
-			return
-
-		# Send a personalized message to each moderator
-		for mod in moderators:
-			try:
-				# Get count specific to this moderator
-				mod_id = mod["discord_id"]
-				mod_pending_count = db.get_pending_suggestion_count(mod_id)
-
-				if mod_pending_count <= 0:
-					continue  # Skip if this moderator has already reviewed all levels
-
-				command_id = await self.get_command_id("pending-suggestions")
-				content = f"</pending-suggestions:{command_id}>" if command_id else "/pending-suggestions"
-
-				# Create a personalized reminder embed
-				embed = discord.Embed(
-					title="🔔 Weekly Moderator Reminder",
-					description=f"There are **{mod_pending_count}** level suggestions waiting for your review. Use {content} to start reviewing.",
-					color=0x00aaff
-				)
-
-				mod_position = db.get_moderator_position(mod_id)
-
-				if mod_position > 0:
-					embed.add_field(
-						name="Your Progress",
-						value=f"You're in position **#{mod_position}** out of `{len(moderators)}` moderators. Keep up the good work!",
-						inline=False
-					)
-
-				embed.set_footer(text="This is a weekly reminder for moderators to review pending suggestions.")
-
-				# Send DM to the moderator
-				user = await self.fetch_user(mod_id)
-				await user.send(embed=embed)
-			except (discord.NotFound, discord.Forbidden):
-				continue
-			except Exception as e:
-				print(f"Error sending reminder to moderator {mod.get('discord_id')}: {e}")
-
-		print(f"Sent weekly reminders to moderators about pending suggestions")
-
-	@weekly_mod_reminder.before_loop
-	async def before_reminder(self):
-		"""Wait until the bot is ready before starting the reminder loop."""
-		await self.wait_until_ready()
-
-		# If we're not on Sunday, wait until next Sunday
-		now = datetime.now(UTC)
-		days_until_sunday = (6 - now.weekday()) % 7  # Days until next Sunday
-		if days_until_sunday > 0:
-			# Wait until next Sunday at 15:00 UTC (a good time for most regions)
-			next_sunday = now + timedelta(days=days_until_sunday)
-			target_time = datetime(
-				next_sunday.year, next_sunday.month, next_sunday.day,
-				15, 0, 0  # 15:00 UTC
-			)
-			await asyncio.sleep((target_time - now.replace(tzinfo=UTC)).total_seconds())
 
 client = SendBot()
 
