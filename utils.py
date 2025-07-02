@@ -1,3 +1,5 @@
+import logging
+
 import requests, threading, time, asyncio, queue
 from typing import Optional, Callable
 from db import SendDB
@@ -55,12 +57,12 @@ class SentChecker:
 
                     if username:
                         callbacks = self.pending_checks.pop(username, [])
-                        player_id, account_id = self.check_account(username)
+                        username, player_id, account_id = self.check_account(username)
                         self.db.increase_stat("requests", 1)
                         for callback, args in callbacks:
                             if self.running.is_set() and self.loop and not self.loop.is_closed():
                                 self.loop.call_soon_threadsafe(
-                                    lambda: asyncio.create_task(callback(player_id, account_id, *args))
+                                    lambda: asyncio.create_task(callback(username, player_id, account_id, *args))
                                 )
 
                     time.sleep(3)
@@ -83,7 +85,7 @@ class SentChecker:
                     asyncio.run_coroutine_threadsafe(self.ban_callback(), self.loop)
                 break
             except Exception as e:
-                print(f"Error in worker thread: {e}")
+                logging.error(f"Error in worker thread: {e}", exc_info=True)
                 time.sleep(10)
 
     @staticmethod
@@ -101,15 +103,15 @@ class SentChecker:
 
 
         if req.text == "error code: 1015": # ratelimited
-            print("Ratelimited!")
+            logging.warning("Ratelimited!")
             raise Ratelimited()
 
         if req.text == "error code: 1005": # asn ban
-            print("ASN Banned!")
+            logging.warning("ASN Banned!")
             raise Banned()
 
         if req.text == "error code: 1006": # ip ban
-            print("IP Banned!")
+            logging.warning("IP Banned!")
             raise Banned()
 
         if req.text == "-1": return [], []
@@ -180,7 +182,7 @@ class SentChecker:
 
         req = requests.post('http://www.boomlings.com/database/getGJUsers20.php', data=data, headers=headers)
 
-        if req.text == "-1": return 0
+        if req.text == "-1": return "", 0, 0
 
         split = req.text.split(":")
         pairs = {int(split[i]): split[i+1] for i in range(0, len(split), 2)}

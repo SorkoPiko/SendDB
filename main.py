@@ -851,6 +851,9 @@ class FollowCommands(commands.GroupCog, name="follow"):
 					return
 				# Try to find creator by name
 				async def callback(username: str, player_id: int, account_id: int):
+					if username == "" and player_id == 0 and account_id == 0:
+						await interaction.followup.send("❌ Creator not found", ephemeral=True)
+						return
 					db.add_creators([{"_id": player_id, "name": username, "accountID": account_id}])
 					db.add_follow(interaction.user.id, "creator", player_id)
 					await interaction.followup.send(f"✅ Now following **{username}** with ID: `{player_id}`", ephemeral=True)
