@@ -922,7 +922,10 @@ async def notify_followers(level_info: dict, timestamp: datetime):
 		color=0x00ff00
 	)
 
-	embed.set_author(name=level_info["creator"], url=f"https://gdbrowser.com/u/{level_info['creatorID']}", icon_url="https://gdbrowser.com/assets/cp.png")
+	if level_info["creatorID"] != 0: url = f"u/{level_info['creatorID']}"
+	else: url = f"search/{level_info['playerID']}?user"
+
+	embed.set_author(name=level_info["creator"], url=f"https://gdbrowser.com/{url}", icon_url="https://gdbrowser.com/assets/cp.png")
 	embed.timestamp = timestamp
 
 	for follower_id in followers:
@@ -940,7 +943,11 @@ async def sendMessage(info: list[dict], timestamp: datetime):
 			description=f"By **{level['creator']}** ({level['playerID']})\nTotal Sends: **{level['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level['_id']}) (`{level['_id']}`)",
 			color=0x00ff00
 		)
-		embed.set_author(name=level["creator"], url=f"https://gdbrowser.com/u/{level['creatorID']}", icon_url="https://gdbrowser.com/assets/cp.png")
+
+		if level["creatorID"] != 0: url = f"u/{level['creatorID']}"
+		else: url = f"search/{level['playerID']}?user"
+
+		embed.set_author(name=level["creator"], url=f"https://gdbrowser.com/{url}", icon_url="https://gdbrowser.com/assets/cp.png")
 		embed.timestamp = timestamp
 
 		embeds.append(embed)
