@@ -211,7 +211,7 @@ class SentChecker:
 
     def approximate_wait_time(self, user: int) -> float:
         """Estimate the approximate wait time based on the number of pending checks."""
-        waitTime = 15
+        waitTime = 5
         with self.lock:
             for username, callbacks in self.pending_checks.items():
                 for _, _, checkUser in callbacks:
