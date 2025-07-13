@@ -751,14 +751,14 @@ async def level_autocomplete(interaction: discord.Interaction, current: str) -> 
 		for level in levels
 	][:25]
 
-async def creator_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+async def creator_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
 	if not current or '(' in current or len(current) > 16:
 		return []
 	creators = db.search_creators(current)
 	return [
-			   app_commands.Choice(name=f"{creator['name']} ({creator['_id']})", value=str(creator['_id']))
-			   for creator in creators
-		   ][:25]
+		app_commands.Choice(name=f"{creator['name']} ({creator['_id']})", value=str(creator['_id']))
+		for creator in creators
+	][:25]
 
 class FollowCommands(commands.GroupCog, name="follow"):
 	def __init__(self, bot: commands.Bot):
