@@ -908,14 +908,14 @@ async def subscribe(interaction: discord.Interaction):
 	await interaction.response.send_message("✅ Subscribed to level send notifications.",ephemeral=True)
 
 @client.tree.command(name="check-level", description="Check a level's sends.")
-@app_commands.describe(level_id="Enter a level name or ID to check its sends")
-@app_commands.autocomplete(level_id=level_autocomplete)
-async def check_level(interaction: discord.Interaction, level_id: str):
+@app_commands.describe(level="Enter a level name or ID to check its sends")
+@app_commands.autocomplete(level=level_autocomplete)
+async def check_level(interaction: discord.Interaction, level: str):
 	# Extract the numeric ID from the input
-	level_numeric_id = extract_id(level_id)
+	level_numeric_id = extract_id(level)
 
 	if level_numeric_id is None:
-		await interaction.response.send_message(f"❌ Invalid level ID: `{level_id}`. Please provide a valid level ID or select from the autocomplete list.", ephemeral=True)
+		await interaction.response.send_message(f"❌ Invalid level ID: `{level}`. Please provide a valid level ID or select from the autocomplete list.", ephemeral=True)
 		return
 
 	sendData = db.get_sends([level_numeric_id])
@@ -965,15 +965,15 @@ async def check_level(interaction: discord.Interaction, level_id: str):
 	)
 
 @client.tree.command(name="check-creator", description="Check a creator's info.")
-@app_commands.describe(creator_id="Enter a creator name or ID to check their info")
-@app_commands.autocomplete(creator_id=creator_autocomplete)
-async def check_creator(interaction: discord.Interaction, creator_id: str):
+@app_commands.describe(creator="Enter a creator name or ID to check their info")
+@app_commands.autocomplete(creator=creator_autocomplete)
+async def check_creator(interaction: discord.Interaction, creator: str):
 	# Extract the numeric ID from the input
-	creator_numeric_id = extract_id(creator_id)
+	creator_numeric_id = extract_id(creator)
 
 	if creator_numeric_id is None:
 		await interaction.response.send_message(
-			f"❌ Invalid creator ID: `{creator_id}`. Please provide a valid creator ID or select from the autocomplete list.",
+			f"❌ Invalid creator ID: `{creator}`. Please provide a valid creator ID or select from the autocomplete list.",
 			ephemeral=True
 		)
 		return
