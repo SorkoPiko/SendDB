@@ -742,7 +742,6 @@ def extract_id(input_string):
 
 	return None
 
-# Autocomplete function for levels
 async def level_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
 	if not current or '(' in current or len(current) > 20:
 		return []
@@ -752,19 +751,19 @@ async def level_autocomplete(interaction: discord.Interaction, current: str) -> 
 		for level in levels
 	][:25]
 
+async def creator_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+	if not current or '(' in current or len(current) > 16:
+		return []
+	creators = db.search_creators(current)
+	return [
+			   app_commands.Choice(name=f"{creator['name']} ({creator['_id']})", value=str(creator['_id']))
+			   for creator in creators
+		   ][:25]
+
 class FollowCommands(commands.GroupCog, name="follow"):
 	def __init__(self, bot: commands.Bot):
 		self.bot = bot
 		super().__init__()
-
-	async def creator_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-		if not current or '(' in current or len(current) > 16:
-			return []
-		creators = db.search_creators(current)
-		return [
-				   app_commands.Choice(name=f"{creator['name']} ({creator['_id']})", value=str(creator['_id']))
-				   for creator in creators
-			   ][:25]
 
 	@app_commands.command(name="creator", description="Follow a creator to get DM notifications when their levels are sent")
 	@app_commands.autocomplete(creator=creator_autocomplete)
@@ -967,7 +966,7 @@ async def check_level(interaction: discord.Interaction, level_id: str):
 
 @client.tree.command(name="check-creator", description="Check a creator's info.")
 @app_commands.describe(creator_id="Enter a creator name or ID to check their info")
-@app_commands.autocomplete(creator_id=FollowCommands.creator_autocomplete)
+@app_commands.autocomplete(creator_id=creator_autocomplete)
 async def check_creator(interaction: discord.Interaction, creator_id: str):
 	# Extract the numeric ID from the input
 	creator_numeric_id = extract_id(creator_id)
