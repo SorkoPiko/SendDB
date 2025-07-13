@@ -993,6 +993,7 @@ async def check_creator(interaction: discord.Interaction, creator_id: str):
 	)
 	embed.add_field(name="Total Sends", value=f"**{creatorData['sends_count']}**", inline=True)
 	embed.add_field(name="Level Count", value=f"**{creatorData['level_count']}**", inline=True)
+	embed.add_field(name="Average Sends per Level", value=f"**{(creatorData['sends_count']/creatorData['level_count']):.2f}**", inline=True)
 	embed.add_field(name="Followers", value=f"**{creatorData['followers_count']}**", inline=True)
 	embed.add_field(
 		name="Latest Send",
