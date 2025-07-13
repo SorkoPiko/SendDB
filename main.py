@@ -965,7 +965,7 @@ async def check_level(interaction: discord.Interaction, level_id: str):
 		embed=embed
 	)
 
-@app_commands.command(name="check-creator", description="Check a creator's info.")
+@client.tree.command(name="check-creator", description="Check a creator's info.")
 @app_commands.describe(creator_id="Enter a creator name or ID to check their info")
 @app_commands.autocomplete(creator_id=FollowCommands.creator_autocomplete)
 async def check_creator(interaction: discord.Interaction, creator_id: str):
