@@ -99,17 +99,35 @@ class SendDB:
 		results = creators.aggregate(pipeline)
 		return {result["_id"]: {"name": result["name"], "accountID": result["accountID"]} for result in results}
 
+
 	def get_creator_info(self, creator_id: int) -> dict:
 		info = self.get_collection("data", "info")
 		sends = self.get_collection("data", "sends")
+		follows = self.get_collection("data", "follows")
 
-		level_ids = info.find({"creator": creator_id}, {"_id": 1})
-		level_ids = [level["_id"] for level in level_ids]
+		info_pipeline = [
+			{"$match": {"creator": creator_id}},
+			{
+				"$group": {
+					"_id": None,
+					"level_ids": {"$push": "$_id"},
+					"level_count": {"$sum": 1},
+					"creator_info": {"$first": {"name": "$name", "accountID": "$accountID"}}
+				}
+			}
+		]
 
-		if not level_ids:
+		info_result = list(info.aggregate(info_pipeline))
+
+		if not info_result:
 			return {}
 
-		pipeline = [
+		info_data = info_result[0]
+		level_ids = info_data["level_ids"]
+		level_count = info_data["level_count"]
+		creator_info = info_data["creator_info"]
+
+		sends_pipeline = [
 			{"$match": {"levelID": {"$in": level_ids}}},
 			{
 				"$group": {
@@ -119,19 +137,16 @@ class SendDB:
 				}
 			}
 		]
-		result = list(sends.aggregate(pipeline))
+		sends_result = list(sends.aggregate(sends_pipeline))
 
-		level_count = len(level_ids)
-
-		follows = self.get_collection("data", "follows")
 		followers_count = follows.count_documents({"type": "creator", "followed_id": creator_id})
 
 		return {
 			"userID": creator_id,
-			"name": info.find_one({"creator": creator_id}, {"name": 1})["name"],
-			"accountID": info.find_one({"creator": creator_id}, {"accountID": 1})["accountID"],
-			"sends_count": result[0]["sends_count"] if result else 0,
-			"latest_send": result[0]["latest_send"] if result else None,
+			"name": creator_info["name"],
+			"accountID": creator_info["accountID"],
+			"sends_count": sends_result[0]["sends_count"] if sends_result else 0,
+			"latest_send": sends_result[0]["latest_send"] if sends_result else None,
 			"level_count": level_count,
 			"followers_count": followers_count
 		}
