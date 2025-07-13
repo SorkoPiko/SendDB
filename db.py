@@ -112,7 +112,22 @@ class SendDB:
 					"_id": None,
 					"level_ids": {"$push": "$_id"},
 					"level_count": {"$sum": 1},
-					"creator_info": {"$first": {"name": "$name", "accountID": "$accountID"}}
+					"creator_id": {"$first": "$creator"}
+				}
+			},
+			{
+				"$lookup": {
+					"from": "creators",
+					"localField": "creator_id",
+					"foreignField": "_id",
+					"as": "creator_info"
+				}
+			},
+			{
+				"$project": {
+					"level_ids": 1,
+					"level_count": 1,
+					"creator_info": {"$arrayElemAt": ["$creator_info", 0]}
 				}
 			}
 		]
