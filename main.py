@@ -334,7 +334,7 @@ class SearchModal(discord.ui.Modal):
 			title=f"Search {'Creator' if search_type == LeaderboardType.CREATORS else 'Level'} ID"
 		)
 		self.search_id = discord.ui.TextInput(
-			label=f"{'User' if search_type == LeaderboardType.CREATORS else 'Level'} ID {'(NOT Player ID)' if search_type == LeaderboardType.CREATORS else ''}",
+			label=f"{'User/Player' if search_type == LeaderboardType.CREATORS else 'Level'} ID{' (NOT Account ID)' if search_type == LeaderboardType.CREATORS else ''}",
 			placeholder="Enter ID...",
 			min_length=1,
 			max_length=20
@@ -964,6 +964,46 @@ async def check_level(interaction: discord.Interaction, level_id: str):
 		content='⚠️ **WARNING**: This level was created before the bot started tracking levels. The data may be inaccurate.' if level_numeric_id < OLDEST_LEVEL else '',
 		embed=embed
 	)
+
+@app_commands.command(name="check-creator", description="Check a creator's info.")
+@app_commands.describe(creator_id="Enter a creator name or ID to check their info")
+@app_commands.autocomplete(creator_id=FollowCommands.creator_autocomplete)
+async def check_creator(interaction: discord.Interaction, creator_id: str):
+	# Extract the numeric ID from the input
+	creator_numeric_id = extract_id(creator_id)
+
+	if creator_numeric_id is None:
+		await interaction.response.send_message(
+			f"❌ Invalid creator ID: `{creator_id}`. Please provide a valid creator ID or select from the autocomplete list.",
+			ephemeral=True
+		)
+		return
+
+	creatorData = db.get_creator_info(creator_numeric_id)
+	if not creatorData:
+		await interaction.response.send_message(
+			f"❌ Creator `{creator_numeric_id}` has no sends.",
+			ephemeral=True
+		)
+		return
+
+	embed = discord.Embed(
+		title=f"{creatorData['name']}'s Stats",
+		description=f"Account ID: `{creatorData['accountID']}`\nCreator Info: [GDBrowser](https://gdbrowser.com/u/{creatorData['accountID']})\n",
+		color=0x00ff00
+	)
+	embed.add_field(name="Total Sends", value=f"**{creatorData['sends_count']}**", inline=True)
+	embed.add_field(name="Level Count", value=f"**{creatorData['level_count']}**", inline=True)
+	embed.add_field(name="Followers", value=f"**{creatorData['followers_count']}**", inline=True)
+	embed.add_field(
+		name="Latest Send",
+		value=f"<t:{int(creatorData['latest_send'].timestamp())}:F> (<t:{int(creatorData['latest_send'].timestamp())}:R>)"
+		if creatorData['latest_send'] else "None",
+		inline=False
+	)
+	embed.set_footer(text=f"User ID: {creator_numeric_id}")
+
+	await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @client.tree.command(name="leaderboard", description="Show the send leaderboard.")
 async def leaderboard(interaction: discord.Interaction):

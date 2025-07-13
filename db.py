@@ -99,6 +99,53 @@ class SendDB:
 		results = creators.aggregate(pipeline)
 		return {result["_id"]: {"name": result["name"], "accountID": result["accountID"]} for result in results}
 
+	def get_creator_info(self, creator_id: int) -> dict:
+		creators = self.get_collection("data", "creators")
+		creator = creators.find_one({"_id": creator_id}, {"_id": 1, "name": 1, "accountID": 1})
+		if not creator:
+			return {}
+
+		sends = self.get_collection("data", "sends")
+		pipeline = [
+			{"$match": {"creatorID": creator_id}},
+			{
+				"$group": {
+					"_id": None,
+					"sends_count": {"$sum": 1},
+					"latest_send": {"$max": "$timestamp"}
+				}
+			},
+			{
+				"$lookup": {
+					"from": "info",
+					"localField": "_id",
+					"foreignField": "creator",
+					"as": "levels"
+				}
+			},
+			{
+				"$addFields": {
+					"level_count": {"$size": "$levels"},
+					# "latest_level": {"$arrayElemAt": ["$levels", -1]}
+				}
+			}
+		]
+		result = list(sends.aggregate(pipeline))
+
+		follows = self.get_collection("data", "follows")
+		followers_count = follows.count_documents({"type": "creator", "followed_id": creator_id})
+
+		return {
+			"userID": creator["_id"],
+			"name": creator["name"],
+			"accountID": creator["accountID"],
+			"sends_count": result[0]["sends_count"] if result else 0,
+			"latest_send": result[0]["latest_send"] if result else None,
+			"level_count": result[0]["level_count"] if result else 0,
+			# "latest_level": result[0]["latest_level"] if result else None,
+			"followers_count": followers_count
+		}
+
 	def get_info(self, level_ids: list[int]) -> dict:
 		info = self.get_collection("data", "info")
 		pipeline = [
