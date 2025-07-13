@@ -1002,7 +1002,7 @@ async def check_creator(interaction: discord.Interaction, creator_id: str):
 	)
 	embed.set_footer(text=f"User ID: {creator_numeric_id}")
 
-	await interaction.response.send_message(embed=embed, ephemeral=True)
+	await interaction.response.send_message(embed=embed)
 
 @client.tree.command(name="leaderboard", description="Show the send leaderboard.")
 async def leaderboard(interaction: discord.Interaction):
