@@ -991,9 +991,15 @@ async def check_creator(interaction: discord.Interaction, creator_id: str):
 		description=f"Account ID: `{creatorData['accountID']}`\nCreator Info: [GDBrowser](https://gdbrowser.com/u/{creatorData['accountID']})\n",
 		color=0x00ff00
 	)
+
+	if creatorData['level_count'] == 0:
+		average_sends = 0
+	else:
+		average_sends = creatorData['sends_count'] / creatorData['level_count']
+
 	embed.add_field(name="Total Sends", value=f"**{creatorData['sends_count']}**", inline=True)
 	embed.add_field(name="Level Count", value=f"**{creatorData['level_count']}**", inline=True)
-	embed.add_field(name="Average Sends per Level", value=f"**{(creatorData['sends_count']/creatorData['level_count']):.2f}**", inline=True)
+	embed.add_field(name="Average Sends per Level", value=f"**{average_sends:.2f}**", inline=True)
 	embed.add_field(name="Followers", value=f"**{creatorData['followers_count']}**", inline=True)
 	embed.add_field(
 		name="Latest Send",
