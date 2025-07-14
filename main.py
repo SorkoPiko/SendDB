@@ -290,7 +290,7 @@ class SendBot(commands.Bot):
 			print(f"Error updating trending message: {e}")
 
 	async def get_full_command_embed(self, command_name: str) -> str:
-		return f"</{command_name}:{self.get_command_id(command_name)}>" if await self.get_command_id(command_name) else f"`/{command_name}`"
+		return f"</{command_name}:{await self.get_command_id(command_name)}>" if await self.get_command_id(command_name) else f"`/{command_name}`"
 
 client = SendBot()
 
