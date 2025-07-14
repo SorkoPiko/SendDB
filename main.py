@@ -294,7 +294,7 @@ class SendBot(commands.Bot):
 
 client = SendBot()
 
-def sendRandomTip(interaction: discord.Interaction, exclude: list[int] = None) -> None:
+async def sendRandomTip(interaction: discord.Interaction, exclude: list[int] = None) -> None:
 	if random.randint(1, 10) >= 3: return
 
 	if exclude is None:
@@ -303,7 +303,7 @@ def sendRandomTip(interaction: discord.Interaction, exclude: list[int] = None) -
 		return
 	tips = [client.tips[i] for i in range(len(client.tips)) if i not in exclude]
 
-	interaction.followup.send(
+	await interaction.followup.send(
 		random.choice(tips),
 		ephemeral=True,
 	)
