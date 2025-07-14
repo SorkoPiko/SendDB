@@ -217,7 +217,7 @@ class SendBot(commands.Bot):
 			f"🔍 **Looking for a creator's stats?** Use {await self.get_full_command_embed('check-creator')} to see their sends and levels!",
 			f"👀 **Want to see a level's stats?** Use {await self.get_full_command_embed('check-level')} to view its sends!",
 			f"📊 **Want to see the leaderboard?** Use {await self.get_full_command_embed('leaderboard')} to view the top creators and levels!",
-			f"💬 **Need help or have suggestions?** Join our support server [here](discord.gg/{invite})!",
+			f"💬 **Need help or have suggestions?** Join our support server [here](https://discord.gg/{invite})!",
 		]
 
 	async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
