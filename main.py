@@ -304,7 +304,7 @@ async def sendRandomTip(interaction: discord.Interaction, exclude: list[int] = N
 	tips = [client.tips[i] for i in range(len(client.tips)) if i not in exclude]
 
 	await interaction.followup.send(
-		random.choice(tips),
+		random.choice(tips) + "\n-# This is a tip. Feel free to ignore it if you don't need it.",
 		ephemeral=True,
 	)
 
