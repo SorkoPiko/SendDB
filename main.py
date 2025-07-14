@@ -1,5 +1,4 @@
-from tabnanny import check
-
+import random
 import discord, os, json, re, git, asyncio, logging
 from dotenv import load_dotenv
 from os import environ
@@ -166,6 +165,7 @@ class SendBot(commands.Bot):
 		self.trendingMessageID = previous_data.get("trending_message", None)
 		self.trendingMessage = None
 		self.synced = False
+		self.tips = []
 
 	async def setup_hook(self):
 		"""This method is called before on_ready to set up initial things"""
@@ -208,9 +208,17 @@ class SendBot(commands.Bot):
 		if self.trendingChannel:
 			self.update_trending_message.start()
 
-
 		checker.start(asyncio.get_running_loop())
 		print(f"We have logged in as {self.user}.")
+
+		client.tips = [
+			f"🌟 **Checking levels often**? Get DM notifications for new sends by following creators with {self.get_full_command_embed('follow creator')}!",
+			f"📈 **Want to see the most popular levels?** Check out the trending levels with {self.get_full_command_embed('trending')}!",
+			f"🔍 **Looking for a creator's stats?** Use {self.get_full_command_embed('check-creator')} to see their sends and levels!",
+			f"👀 **Want to see a level's stats?** Use {self.get_full_command_embed('check-level')} to view its sends!",
+			f"📊 **Want to see the leaderboard?** Use {self.get_full_command_embed('leaderboard')} to view the top creators and levels!",
+			f"💬 **Need help or have suggestions?** Join our support server [here](discord.gg/{invite})!",
+		]
 
 	async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
 		"""Event that triggers when a command encounters an error"""
@@ -281,7 +289,24 @@ class SendBot(commands.Bot):
 		except Exception as e:
 			print(f"Error updating trending message: {e}")
 
+	async def get_full_command_embed(self, command_name: str) -> str:
+		return f"</{command_name}:{self.get_command_id(command_name)}>" if await self.get_command_id(command_name) else f"`/{command_name}`"
+
 client = SendBot()
+
+def sendRandomTip(interaction: discord.Interaction, exclude: list[int] = None) -> None:
+	if random.randint(1, 10) >= 3: return
+
+	if exclude is None:
+		exclude = []
+	if not client.tips:
+		return
+	tips = [client.tips[i] for i in range(len(client.tips)) if i not in exclude]
+
+	interaction.followup.send(
+		random.choice(tips),
+		ephemeral=True,
+	)
 
 class LeaderboardType(Enum):
 	CREATORS = "Creators"
@@ -788,6 +813,8 @@ class FollowCommands(commands.GroupCog, name="follow"):
 					db.add_follow(interaction.user.id, "creator", player_id)
 					await interaction.followup.send(f"✅ Now following **{username}** with ID: `{player_id}`", ephemeral=True)
 
+					await sendRandomTip(interaction, exclude=[0])
+
 				timeNow = int(datetime.now(UTC).timestamp())
 				checker.queue_check(creator, callback, interaction.user.id)
 				await interaction.followup.send(f"🔍 Checking creator `{creator}` (Ready <t:{timeNow+checker.approximate_wait_time(interaction.user.id)}:R>)...", ephemeral=True)
@@ -799,16 +826,20 @@ class FollowCommands(commands.GroupCog, name="follow"):
 		db.add_follow(interaction.user.id, "creator", creator_id)
 		await interaction.followup.send(f"✅ Now following **{creators[creator_id]['name']}**", ephemeral=True)
 
+		await sendRandomTip(interaction, exclude=[0])
+
 	@app_commands.command(name="level", description="Follow a level to get DM notifications when it is sent")
 	async def follow_level(self, interaction: discord.Interaction, level_id: int):
-		info = db.get_info([level_id])
-		if level_id in info:
-			level_name = f"**{info[level_id]['name']}**"
+		level_info = db.get_info([level_id])
+		if level_id in level_info:
+			level_name = f"**{level_info[level_id]['name']}**"
 		else:
 			level_name = f"`{level_id}`"
 
 		db.add_follow(interaction.user.id, "level", level_id)
 		await interaction.response.send_message(f"✅ Now following level {level_name}", ephemeral=True)
+
+		await sendRandomTip(interaction, exclude=[0])
 
 	@app_commands.command(name="list", description="List all your followed creators and levels")
 	async def list_follows(self, interaction: discord.Interaction):
@@ -835,10 +866,14 @@ class FollowCommands(commands.GroupCog, name="follow"):
 
 		await interaction.response.send_message(embed=embed, ephemeral=True)
 
+		await sendRandomTip(interaction, exclude=[0])
+
 	@app_commands.command(name="unfollow", description="Unfollow a creator or level")
 	async def unfollow(self, interaction: discord.Interaction, type: Literal["creator", "level"], id: int):
 		db.remove_follow(interaction.user.id, type, id)
 		await interaction.response.send_message(f"✅ Unfollowed {type} `{id}`", ephemeral=True)
+
+		await sendRandomTip(interaction, exclude=[0])
 
 async def notify_followers(level_info: dict, timestamp: datetime):
 	level_followers = db.get_followers("level", level_info["_id"])
@@ -964,6 +999,8 @@ async def check_level(interaction: discord.Interaction, level: str):
 		embed=embed
 	)
 
+	await sendRandomTip(interaction, exclude=[3])
+
 @client.tree.command(name="check-creator", description="Check a creator's info.")
 @app_commands.describe(creator="Enter a creator name or ID to check their info")
 @app_commands.autocomplete(creator=creator_autocomplete)
@@ -1011,17 +1048,23 @@ async def check_creator(interaction: discord.Interaction, creator: str):
 
 	await interaction.response.send_message(embed=embed)
 
+	await sendRandomTip(interaction, exclude=[2])
+
 @client.tree.command(name="leaderboard", description="Show the send leaderboard.")
 async def leaderboard(interaction: discord.Interaction):
 	view = LeaderboardView(db, interaction.user.id)
 	await interaction.response.send_message(embed=await view.get_embed(), view=view)
 	view.message = await interaction.original_response()
 
+	await sendRandomTip(interaction, exclude=[4])
+
 @client.tree.command(name="trending", description="Show currently trending levels")
 async def trending(interaction: discord.Interaction):
 	view = TrendingView(db, interaction.user.id)
 	await interaction.response.send_message(embed=await view.get_embed(), view=view)
 	view.message = await interaction.original_response()
+
+	await sendRandomTip(interaction, exclude=[1])
 
 @client.tree.command(name="info", description="Show the bot's info and stats.")
 async def info(interaction: discord.Interaction):
@@ -1056,5 +1099,9 @@ Support Server: [SendDB](https://discord.gg/{invite})
 
 	await interaction.response.send_message(embed=embed)
 
+	await sendRandomTip(interaction, exclude=[5])
+
+async def send_tips(interaction: discord.Interaction):
+	interaction.followup.send()
 
 client.run(environ.get("BOT_TOKEN"))
