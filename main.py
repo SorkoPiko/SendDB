@@ -212,11 +212,11 @@ class SendBot(commands.Bot):
 		print(f"We have logged in as {self.user}.")
 
 		client.tips = [
-			f"🌟 **Checking levels often**? Get DM notifications for new sends by following creators with {self.get_full_command_embed('follow creator')}!",
-			f"📈 **Want to see the most popular levels?** Check out the trending levels with {self.get_full_command_embed('trending')}!",
-			f"🔍 **Looking for a creator's stats?** Use {self.get_full_command_embed('check-creator')} to see their sends and levels!",
-			f"👀 **Want to see a level's stats?** Use {self.get_full_command_embed('check-level')} to view its sends!",
-			f"📊 **Want to see the leaderboard?** Use {self.get_full_command_embed('leaderboard')} to view the top creators and levels!",
+			f"🌟 **Checking levels often**? Get DM notifications for new sends by following creators with {await self.get_full_command_embed('follow creator')}!",
+			f"📈 **Want to see the most popular levels?** Check out the trending levels with {await self.get_full_command_embed('trending')}!",
+			f"🔍 **Looking for a creator's stats?** Use {await self.get_full_command_embed('check-creator')} to see their sends and levels!",
+			f"👀 **Want to see a level's stats?** Use {await self.get_full_command_embed('check-level')} to view its sends!",
+			f"📊 **Want to see the leaderboard?** Use {await self.get_full_command_embed('leaderboard')} to view the top creators and levels!",
 			f"💬 **Need help or have suggestions?** Join our support server [here](discord.gg/{invite})!",
 		]
 
