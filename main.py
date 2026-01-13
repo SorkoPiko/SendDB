@@ -131,7 +131,7 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 			creator_name = "Unknown"
 
 		sends += [{"levelID": level_id, "timestamp": timestamp}]
-		info += [{"_id": level_id, "name": level["name"], "creator": creator_id}]
+		info += [{"_id": level_id, "name": level["name"], "creator": creator_id, "length": level["length"], "platformer": level["platformer"]}]
 		sendMessageInfo += [{
 			"_id": level_id,
 			"name": level["name"],
@@ -153,7 +153,7 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 			"points": level["points"],
 			"timestamp": timestamp
 		}]
-		info += [{"_id": level_id, "name": level["name"], "creator": creator_id}]
+		info += [{"_id": level_id, "name": level["name"], "creator": creator_id, "length": level["length"], "platformer": level["platformer"]}]
 
 		stars = DIFFICULTIES.get(level["stars"], "Unknown")
 		if level["stars"] == 10: stars = DEMON_DIFFICULTY_MAP.get(level["difficulty"], "") + stars
@@ -171,8 +171,7 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 		}]
 
 	for i in remove:
-		level = rated_levels[i]
-		unrates += [level["_id"]]
+		unrates += [previous_rated_levels[i]]
 
 	previous_levels = level_ids
 	previous_rated_levels = rated_level_ids
@@ -195,9 +194,9 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 			for level in sendMessageInfo:
 				if level["_id"] == sendID:
 					level["sends"] = sendCount["count"]
-					await notify_followers_of_send(level, timestamp)
+					asyncio.create_task(notify_followers_of_send(level, timestamp))
 
-		await sendSendsMessage(sendMessageInfo, timestamp)
+		asyncio.create_task(sendSendsMessage(sendMessageInfo, timestamp))
 
 	if rateMessageInfo:
 		print("New rated levels!")
@@ -208,9 +207,9 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 			for level in rateMessageInfo:
 				if level["_id"] == rateID:
 					level["sends"] = sendCount["count"]
-					await notify_followers_of_rate(level, timestamp)
+					asyncio.create_task(notify_followers_of_rate(level, timestamp))
 
-		await sendRatesMessage(rateMessageInfo, timestamp)
+		asyncio.create_task(sendRatesMessage(rateMessageInfo, timestamp))
 
 async def sendBanNotification():
 	await client.sendChannel.send("❌ **Bot was IP Banned!**")
@@ -240,18 +239,6 @@ class SendBot(commands.Bot):
 		# Optional: You can add more detailed stats if needed
 		command_name = command.qualified_name
 		db.increase_stat(f"command_{command_name}")
-
-	async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-		"""Event that triggers when a command encounters an error"""
-		# Log the error somewhere if you want to track it
-		print(f"Command error: {error}")
-
-		# Notify the user if they haven't already been responded to
-		if not interaction.response.is_done():
-			await interaction.response.send_message(
-				"There was an error executing this command. Please try again later.",
-				ephemeral=True
-			)
 
 	async def on_ready(self):
 		await self.wait_until_ready()
@@ -1005,7 +992,10 @@ async def sendSendsMessage(info: list[dict], timestamp: datetime):
 	num = len(info)
 	s = "s" if num != 1 else ""
 	message = await client.sendChannel.send(content=f"**{num}** level{s} sent.\nCheck time: <t:{int(timestamp.timestamp())}:F> (<t:{int(timestamp.timestamp())}:R>)", embeds=embeds)
-	await message.publish()
+	try:
+		await message.publish()
+	except discord.Forbidden:
+		pass
 
 async def sendRatesMessage(info: list[dict], timestamp: datetime):
 	embeds = []
@@ -1027,7 +1017,10 @@ async def sendRatesMessage(info: list[dict], timestamp: datetime):
 	num = len(info)
 	s = "s" if num != 1 else ""
 	message = await client.sendChannel.send(content=f"**{num}** level{s} rated.\nCheck time: <t:{int(timestamp.timestamp())}:F> (<t:{int(timestamp.timestamp())}:R>)", embeds=embeds)
-	await message.publish()
+	try:
+		await message.publish()
+	except discord.Forbidden:
+		pass
 
 @client.tree.command(name="subscribe", description="Subscribe this channel to level send notifications.")
 @app_commands.describe()

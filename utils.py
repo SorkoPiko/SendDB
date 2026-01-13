@@ -121,10 +121,13 @@ class SentChecker:
 		for level in rawLevels:
 			parts = level.split(":")
 			data = {parts[i]: parts[i + 1] for i in range(0, len(parts), 2)}
+			_15 = int(data.get("15", 0))
 			levels.append({
 				"_id": int(data["1"]),
 				"name": data["2"],
-				"creatorID": int(data["6"])
+				"creatorID": int(data["6"]),
+				"length": _15,
+				"platformer": (_15 == 5)
 			})
 
 		creators = []
@@ -164,12 +167,15 @@ class SentChecker:
 		for level in rawLevels:
 			parts = level.split(":")
 			data = {parts[i]: parts[i + 1] for i in range(0, len(parts), 2)}
+			_15 = int(data.get("15", 0))
 			_18 = int(data.get("18", 0))
 			_42 = int(data.get("42", 0))
 			levels.append({
 				"_id": int(data["1"]),
 				"name": data["2"],
 				"creatorID": int(data["6"]),
+				"length": _15,
+				"platformer": (_15 == 5),
 				"difficulty": DEMON_MAP.get(int(data.get("43", 3)), 0),
 				"stars": _18,
 				"points": (1 if _18 > 0 else 0) + (1 if int(data.get("19", 0)) > 0 else 0) + (_42 if _42 > 0 else 0) # https://github.com/RedLime/DemonObserver/blob/1.2-master/src/classes/demon.js#L4
@@ -290,7 +296,6 @@ def find_additions(A: list, B: list) -> tuple[list[int], list[int]]:
 	removed_indices = [i for i, item in enumerate(A) if item not in set_B]
 
 	return added_indices, removed_indices
-
 
 def subtract_lists(A: list, B: list):
 	setB = set(B)
