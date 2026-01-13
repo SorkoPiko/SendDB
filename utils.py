@@ -256,14 +256,24 @@ class SentChecker:
 def find_difference(A: list, B: list):
 	if not B: return []
 
-	i = len(A) - 1
-	j = len(B) - 1
+	for split_idx in range(len(B) + 1):
+		suffix = B[split_idx:]
 
-	while i >= 0 and j >= 0 and A[i] == B[j]:
-		i -= 1
-		j -= 1
+		if is_subsequence(suffix, A):
+			return list(range(split_idx))
 
-	return list(range(j + 1))
+	return list(range(len(B)))
+
+
+def is_subsequence(subseq, seq):
+	if not subseq: return True
+
+	subseq_idx = 0
+	for item in seq:
+		if subseq_idx < len(subseq) and item == subseq[subseq_idx]:
+			subseq_idx += 1
+
+	return subseq_idx == len(subseq)
 
 def find_additions(A: list, B: list) -> tuple[list[int], list[int]]:
 	if not A and not B: return [], []
