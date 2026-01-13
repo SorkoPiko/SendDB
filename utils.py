@@ -261,11 +261,14 @@ class SentChecker:
 
 def find_difference(A: list, B: list):
 	if not B: return []
+	A_set = set(A)
 
 	for split_idx in range(len(B) + 1):
 		suffix = B[split_idx:]
 
-		if is_subsequence(suffix, A):
+		suffix_in_A = [item for item in suffix if item in A_set]
+
+		if is_subsequence(suffix_in_A, A):
 			return list(range(split_idx))
 
 	return list(range(len(B)))
