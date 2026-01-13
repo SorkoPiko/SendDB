@@ -2,14 +2,14 @@ import re
 from typing import Optional
 from pymongo import UpdateOne
 from pymongo.mongo_client import MongoClient
-from pymongo.server_api import ServerApi
+from pymongo.server_api import ServerApi, ServerApiVersion
 from pymongo.collection import Collection
 from pymongo.database import Database
 from datetime import datetime, UTC, timedelta
 
 class SendDB:
 	def __init__(self, connection_string: str):
-		self.client = MongoClient(connection_string, server_api=ServerApi('1'))
+		self.client = MongoClient(connection_string, server_api=ServerApi(ServerApiVersion.V1))
 		self.create_indexes()
 
 	def create_indexes(self):
@@ -76,6 +76,31 @@ class SendDB:
 			) for creator in creators
 		]
 		creators_collection.bulk_write(operations)
+
+	def add_rates(self, rates: list[dict]):
+		if not rates: return
+
+		rates_collection = self.get_collection("data", "rates")
+		operations = [
+			UpdateOne(
+				{"_id": rate["_id"]},
+				{
+					"$setOnInsert": {
+						"timestamp": rate.get("timestamp", datetime.now(UTC))
+					},
+					"$set": {k: v for k, v in rate.items() if k != "_id" and k != "timestamp"}
+				},
+				upsert=True
+			)
+			for rate in rates
+		]
+		rates_collection.bulk_write(operations, ordered=False)
+
+	def remove_rates(self, ids: list[int]):
+		if not ids: return
+
+		rates_collection = self.get_collection("data", "rates")
+		rates_collection.delete_many({"_id": {"$in": ids}})
 
 	def set_mod(self, id: int, timestamp: datetime, mod: int):
 		sends = self.get_collection("data", "sends")
@@ -294,6 +319,19 @@ class SendDB:
 					},
 					"recent_sends": {"$sum": 1},
 					"latest_send": {"$max": "$timestamp"}
+				}
+			},
+			{
+				"$lookup": {
+					"from": "rates",
+					"localField": "_id",
+					"foreignField": "_id",
+					"as": "rate"
+				}
+			},
+			{
+				"$match": {
+					"rate": {"$size": 0}
 				}
 			}
 		]

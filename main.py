@@ -5,13 +5,13 @@ from os import environ
 from discord.ext import commands, tasks
 from discord.ui import Button, View
 from discord import app_commands
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, UTC
 from math import ceil
 from enum import Enum
 from typing import Literal
 
 from db import SendDB
-from utils import SentChecker
+import utils
 
 logging.basicConfig(
 	filename='exceptions.log',  # File to save exceptions
@@ -20,7 +20,12 @@ logging.basicConfig(
 )
 
 load_dotenv()
-db = SendDB(f"mongodb+srv://{environ.get('MONGO_USERNAME')}:{environ.get('MONGO_PASSWORD')}@{environ.get('MONGO_ENDPOINT')}")
+
+connection_string = environ.get('MONGO_CONNECTION_STRING')
+if connection_string is None:
+	raise EnvironmentError("MONGO_CONNECTION_STRING environment variable is not set.")
+
+db = SendDB(connection_string)
 
 OLDEST_LEVEL = int(environ.get("OLDEST_LEVEL"))
 DIFFICULTIES = {
@@ -34,6 +39,13 @@ DIFFICULTIES = {
 	8: "Insane 8⭐",
 	9: "Insane 9⭐",
 	10: "Demon 10⭐"
+}
+DEMON_DIFFICULTY_MAP = {
+	0: "Easy ",
+	1: "Medium ",
+	2: "Hard ",
+	3: "Insane ",
+	4: "Extreme "
 }
 RATINGS = {
 	1: "Rate",
@@ -68,11 +80,12 @@ def load_previous_data():
 		with open("previous_data.json", "r") as file:
 			data = json.load(file)
 			return data
-	return []
+	return {}
 
-def save_previous_data(levels):
+def save_previous_data(levels, rated_levels):
 	data = {
 		"previous_levels": levels,
+		"previous_rated_levels": rated_levels,
 		"trending_message": client.trendingMessageID
 	}
 	with open("previous_data.json", "w") as file:
@@ -80,82 +93,129 @@ def save_previous_data(levels):
 
 previous_data = load_previous_data()
 previous_levels = previous_data.get("previous_levels", [])
+previous_rated_levels = previous_data.get("previous_rated_levels", [])
 
-async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[int]):
-	if not levels or not creators or not rated_levels:
+async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[dict], rated_creators: list[dict]):
+	if not levels or not creators or not rated_levels or not rated_creators:
 		print("No data received.")
 		return
 	global previous_levels
+	global previous_rated_levels
 
 	timestamp = datetime.now(UTC)
 
-	creatorMap = {creator["_id"]: creator["name"] for creator in creators}
-	accountMap = {creator["_id"]: creator["accountID"] for creator in creators}
+	creatorMap = {creator["_id"]: creator["name"] for creator in creators + rated_creators}
+	accountMap = {creator["_id"]: creator["accountID"] for creator in creators + rated_creators}
 	level_ids = [level["_id"] for level in levels]
+	rated_level_ids = [level["_id"] for level in rated_levels]
 
 	sends = []
+	rates = []
+	unrates = []
 	info = []
-	webhookInfo = []
+	sendMessageInfo = []
+	rateMessageInfo = []
 
-	# Check which levels from previous_levels are no longer in the current list
-	disappeared_levels = [level_id for level_id in previous_levels if level_id not in level_ids]
+	filtered_levels = [level for level in levels if level["_id"] not in rated_level_ids] # should never match, just a sanity check
+	filtered_level_ids = [level["_id"] for level in filtered_levels]
 
-	ignoreIndex = len(level_ids)
-	for id in disappeared_levels:
-		if id in rated_levels:
-			previous_levels.remove(id)
-			ignoreIndex -= 1
+	for i in utils.find_difference(
+		utils.subtract_lists(previous_levels, rated_level_ids),
+		filtered_level_ids
+	):
+		level = filtered_levels[i]
+		level_id = level["_id"]
+		creator_id = level["creatorID"]
+		creator_name = creatorMap[creator_id]
+		if not creator_name:
+			creator_name = "Unknown"
 
-	for i, level_id in enumerate(level_ids):
-		if i >= ignoreIndex:
-			break
+		sends += [{"levelID": level_id, "timestamp": timestamp}]
+		info += [{"_id": level_id, "name": level["name"], "creator": creator_id}]
+		sendMessageInfo += [{
+			"_id": level_id,
+			"name": level["name"],
+			"creator": creator_name,
+			"creatorID": accountMap[creator_id],
+			"playerID": creator_id,
+			"sends": 1
+		}]
 
-		if level_id in previous_levels:
-			previous_index = previous_levels.index(level_id)
-		else:
-			previous_index = 99
+	add, remove = utils.find_additions(previous_rated_levels, rated_level_ids)
+	for i in add:
+		level = rated_levels[i]
+		level_id = level["_id"]
+		creator_id = level["creatorID"]
+		rates += [{
+			"_id": level_id,
+			"difficulty": level["difficulty"],
+			"stars": level["stars"],
+			"points": level["points"],
+			"timestamp": timestamp
+		}]
+		info += [{"_id": level_id, "name": level["name"], "creator": creator_id}]
 
-		if i < previous_index:
-			creator_id = levels[i]["creatorID"]
-			creator_name = creatorMap[creator_id]
-			if not creator_name:
-				creator_name = "Unknown"
+		stars = DIFFICULTIES.get(level["stars"], "Unknown")
+		if level["stars"] == 10: stars = DEMON_DIFFICULTY_MAP.get(level["difficulty"], "") + stars
 
-			sends += [{"levelID": level_id, "timestamp": timestamp}]
-			info += [{"_id": level_id, "name": levels[i]["name"], "creator": levels[i]["creatorID"]}]
-			webhookInfo += [{
-				"_id": level_id,
-				"name": levels[i]["name"],
-				"creator": creator_name,
-				"creatorID": accountMap[levels[i]["creatorID"]],
-				"playerID": levels[i]["creatorID"],
-				"sends": 1
-			}]
+		rateMessageInfo += [{
+			"_id": level_id,
+			"name": level["name"],
+			"creator": creatorMap.get(creator_id, "Unknown"),
+			"creatorID": accountMap.get(creator_id, 0),
+			"playerID": creator_id,
+			"stars": stars,
+			"points": level["points"],
+			"rating": RATINGS.get(level["points"], "Unknown"),
+			"sends": 0
+		}]
+
+	for i in remove:
+		level = rated_levels[i]
+		unrates += [level["_id"]]
 
 	previous_levels = level_ids
-	save_previous_data(previous_levels)
+	previous_rated_levels = rated_level_ids
+	save_previous_data(previous_levels, previous_rated_levels)
 
 	db.add_sends(sends)
+	db.add_rates(rates)
+	db.remove_rates(unrates)
 	db.add_info(info)
 
-	if webhookInfo:
+	if sends or rates or unrates:
+		await client.update_trending_message()
+
+	if sendMessageInfo:
 		print("New sent levels!")
 		db.add_creators(creators)
-		checkIds = [level["_id"] for level in webhookInfo]
+		checkIds = [level["_id"] for level in sendMessageInfo]
 		sendMap = db.get_sends(checkIds)
 		for sendID, sendCount in sendMap.items():
-			for level in webhookInfo:
+			for level in sendMessageInfo:
 				if level["_id"] == sendID:
 					level["sends"] = sendCount["count"]
-					await notify_followers(level, timestamp)
-					await client.update_trending_message()
+					await notify_followers_of_send(level, timestamp)
 
-		await sendMessage(webhookInfo, timestamp)
+		await sendSendsMessage(sendMessageInfo, timestamp)
+
+	if rateMessageInfo:
+		print("New rated levels!")
+		db.add_creators(rated_creators)
+		checkIds = [level["_id"] for level in rateMessageInfo]
+		sendMap = db.get_sends(checkIds)
+		for rateID, sendCount in sendMap.items():
+			for level in rateMessageInfo:
+				if level["_id"] == rateID:
+					level["sends"] = sendCount["count"]
+					await notify_followers_of_rate(level, timestamp)
+
+		await sendRatesMessage(rateMessageInfo, timestamp)
 
 async def sendBanNotification():
 	await client.sendChannel.send("❌ **Bot was IP Banned!**")
 
-checker = SentChecker(onSendResults, sendBanNotification, db)
+checker = utils.SentChecker(onSendResults, sendBanNotification, db)
 
 class SendBot(commands.Bot):
 	def __init__(self):
@@ -875,7 +935,7 @@ class FollowCommands(commands.GroupCog, name="follow"):
 
 		await sendRandomTip(interaction, exclude=[0])
 
-async def notify_followers(level_info: dict, timestamp: datetime):
+async def notify_followers_of_send(level_info: dict, timestamp: datetime):
 	level_followers = db.get_followers("level", level_info["_id"])
 	creator_followers = db.get_followers("creator", level_info["playerID"])
 
@@ -900,7 +960,32 @@ async def notify_followers(level_info: dict, timestamp: datetime):
 		except (discord.NotFound, discord.Forbidden):
 			continue
 
-async def sendMessage(info: list[dict], timestamp: datetime):
+async def notify_followers_of_rate(level_info: dict, timestamp: datetime):
+	level_followers = db.get_followers("level", level_info["_id"])
+	creator_followers = db.get_followers("creator", level_info["creator"])
+
+	followers = set(level_followers + creator_followers)
+
+	embed = discord.Embed(
+		title=f"{level_info['name']} was just rated!",
+		description=f"Difficulty: **{level_info['stars']}**\nRating: **{level_info['rating']}** (+**{level_info['points']}**)\nBy **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})",
+		color=0xd4af37
+	)
+
+	if level_info["creatorID"] != 0: url = f"u/{level_info['creatorID']}"
+	else: url = f"search/{level_info['playerID']}?user"
+
+	embed.set_author(name=level_info["creator"], url=f"https://gdbrowser.com/{url}", icon_url="https://gdbrowser.com/assets/cp.png")
+	embed.timestamp = timestamp
+
+	for follower_id in followers:
+		try:
+			user = await client.fetch_user(follower_id)
+			await user.send(embed=embed)
+		except (discord.NotFound, discord.Forbidden):
+			continue
+
+async def sendSendsMessage(info: list[dict], timestamp: datetime):
 	embeds = []
 	for level in info:
 		embed = discord.Embed(
@@ -920,6 +1005,28 @@ async def sendMessage(info: list[dict], timestamp: datetime):
 	num = len(info)
 	s = "s" if num != 1 else ""
 	message = await client.sendChannel.send(content=f"**{num}** level{s} sent.\nCheck time: <t:{int(timestamp.timestamp())}:F> (<t:{int(timestamp.timestamp())}:R>)", embeds=embeds)
+	await message.publish()
+
+async def sendRatesMessage(info: list[dict], timestamp: datetime):
+	embeds = []
+	for level in info:
+		embed = discord.Embed(
+			title=level["name"],
+			description=f"Difficulty: **{level['stars']}**\nRating: **{level['rating']}** (+**{level['points']}**)\nBy **{level['creator']}** ({level['playerID']})\nTotal Sends: **{level['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level['_id']}) (`{level['_id']}`)",
+			color=0xd4af37
+		)
+
+		if level["creatorID"] != 0: url = f"u/{level['creatorID']}"
+		else: url = f"search/{level['playerID']}?user"
+
+		embed.set_author(name=level["creator"], url=f"https://gdbrowser.com/{url}", icon_url="https://gdbrowser.com/assets/cp.png")
+		embed.timestamp = timestamp
+
+		embeds.append(embed)
+
+	num = len(info)
+	s = "s" if num != 1 else ""
+	message = await client.sendChannel.send(content=f"**{num}** level{s} rated.\nCheck time: <t:{int(timestamp.timestamp())}:F> (<t:{int(timestamp.timestamp())}:R>)", embeds=embeds)
 	await message.publish()
 
 @client.tree.command(name="subscribe", description="Subscribe this channel to level send notifications.")
