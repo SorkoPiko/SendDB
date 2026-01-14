@@ -194,7 +194,7 @@ class SentChecker:
 		return levels, creators
 
 	@staticmethod
-	def check_account(username) -> [str, int, int]:
+	def check_account(username) -> tuple[str, int, int]:
 		data = {
 			"str": username,
 			"secret": "Wmfd2893gb7"
