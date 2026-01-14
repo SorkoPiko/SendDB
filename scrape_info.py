@@ -86,7 +86,7 @@ for id in tqdm(ids, desc="Scraping levels", unit="level"):
 		demon = utils.DEMON_MAP.get(latest.get("demon_type", 3), 0)
 
 		for record in records:
-			if record.get("stars", 0) <= 0: continue
+			if (record.get("stars", 0) or 0) <= 0: continue
 
 			timestamp = datetime.fromisoformat(record["real_date"].replace("Z", "+00:00"))
 			rate_operations.append(
