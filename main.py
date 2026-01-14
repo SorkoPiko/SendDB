@@ -411,7 +411,7 @@ class PageModal(discord.ui.Modal, title="Go to Page"):
 
 class TypeSelect(discord.ui.Select):
 	def __init__(self, parent_view: "LeaderboardView"):
-		self._view = parent_view  # Store the view reference directly
+		self._view = parent_view
 		options = [
 			discord.SelectOption(label="Creator Leaderboard", value="CREATORS", description="Show sends by creator"),
 			discord.SelectOption(label="Level Leaderboard", value="LEVELS", description="Show sends by level")
@@ -420,6 +420,24 @@ class TypeSelect(discord.ui.Select):
 
 	async def callback(self, interaction: discord.Interaction):
 		self._view.type = LeaderboardType[self.values[0]]
+		self._view.current_page = 0
+		self._view.searched_id = None
+		self._view.update_buttons()
+		await interaction.response.edit_message(embed=await self._view.get_embed(), view=self._view)
+
+class FilterSelect(discord.ui.Select):
+	def __init__(self, parent_view: "LeaderboardView"):
+		self._view = parent_view
+		options = [
+			discord.SelectOption(label="Rated", value="RATED", description="Show rated levels"),
+			discord.SelectOption(label="Unrated", value="UNRATED", description="Show unrated levels"),
+			discord.SelectOption(label="Classic", value="CLASSIC", description="Show classic levels"),
+			discord.SelectOption(label="Platformer", value="PLATFORMER", description="Show platformer levels"),
+		]
+		super().__init__(placeholder="Select search filters...", options=options)
+
+	async def callback(self, interaction: discord.Interaction):
+		self._view.filters = self.values
 		self._view.current_page = 0
 		self._view.searched_id = None
 		self._view.update_buttons()
@@ -455,95 +473,105 @@ class LeaderboardView(View):
 		self.current_page = 0
 		self.total_count = 0
 		self.type = LeaderboardType.CREATORS
+		self.filters = []
 		self.searched_id = None
 
 		# Add type selector
 		self.type_select = TypeSelect(self)
 		self.add_item(self.type_select)
+		self.filter_select = FilterSelect(self)
+		self.add_item(self.filter_select)
 
 	def get_pipeline_for_type(self, skip: int, limit: int) -> list[dict]:
+		base_pipeline = [
+			{"$group": {
+				"_id": "$levelID",
+				"send_count": {"$sum": 1}
+			}},
+			{"$lookup": {
+				"from": "info",
+				"localField": "_id",
+				"foreignField": "_id",
+				"as": "level_info"
+			}},
+			{"$unwind": "$level_info"}
+		]
+
+		if self.filters:
+			match_conditions = {}
+			if self.filters.__contains__("RATED") != self.filters.__contains__("UNRATED"):
+				base_pipeline.append({
+					"$lookup": {
+						"from": "rates",
+						"localField": "_id",
+						"foreignField": "_id",
+						"as": "rate_info"
+					}
+				})
+				if "RATED" in self.filters:
+					match_conditions["rate_info"] = {"$ne": []}
+				elif "UNRATED" in self.filters:
+					match_conditions["rate_info"] = {"$eq": []}
+			if "PLATFORMER" in self.filters:
+				match_conditions["level_info.platformer"] = True
+			if "CLASSIC" in self.filters:
+				match_conditions["level_info.platformer"] = False
+
+			if match_conditions:
+				base_pipeline.append({"$match": match_conditions})
+
 		if self.type == LeaderboardType.CREATORS:
-			return [
-				{"$group": {
-					"_id": "$levelID",
-					"count": {"$sum": 1}
-				}},
-				{"$lookup": {
-					"from": "info",
-					"localField": "_id",
-					"foreignField": "_id",
-					"as": "level_info"
-				}},
-				{"$unwind": "$level_info"},
+			base_pipeline.extend([
 				{"$group": {
 					"_id": "$level_info.creator",
-					"sends": {"$sum": "$count"},
-					"level_count": {"$addToSet": "$_id"}
+					"sends": {"$sum": "$send_count"},
+					"level_count": {"$sum": 1}
 				}},
-				{"$facet": {
-					"total": [{"$count": "count"}],
-					"data": [
-						{"$lookup": {
-							"from": "creators",
-							"localField": "_id",
-							"foreignField": "_id",
-							"as": "creator_info"
-						}},
-						{"$unwind": "$creator_info"},
-						{"$project": {
-							"name": "$creator_info.name",
-							"accountID": "$creator_info._id",
-							"sends": 1,
-							"level_count": {"$size": "$level_count"}
-						}},
-						{"$sort": {
-							"sends": -1,
-							"_id": 1
-						}},
-						{"$skip": skip},
-						{"$limit": limit}
-					]
+				{"$lookup": {
+					"from": "creators",
+					"localField": "_id",
+					"foreignField": "_id",
+					"as": "creator_info"
+				}},
+				{"$unwind": "$creator_info"},
+				{"$project": {
+					"name": "$creator_info.name",
+					"accountID": "$creator_info.accountID",
+					"sends": 1,
+					"level_count": 1
 				}}
-			]
+			])
 		else:
-			return [
-				{"$group": {
-					"_id": "$levelID",
-					"sends": {"$sum": 1}
+			base_pipeline.extend([
+				{"$lookup": {
+					"from": "creators",
+					"localField": "level_info.creator",
+					"foreignField": "_id",
+					"as": "creator_info"
 				}},
-				{"$facet": {
-					"total": [{"$count": "count"}],
-					"data": [
-						{"$lookup": {
-							"from": "info",
-							"localField": "_id",
-							"foreignField": "_id",
-							"as": "level_info"
-						}},
-						{"$unwind": "$level_info"},
-						{"$lookup": {
-							"from": "creators",
-							"localField": "level_info.creator",
-							"foreignField": "_id",
-							"as": "creator_info"
-						}},
-						{"$unwind": "$creator_info"},
-						{"$project": {
-							"name": "$level_info.name",
-							"creator": "$creator_info.name",
-							"creatorID": "$creator_info._id",
-							"levelID": "$_id",
-							"sends": 1
-						}},
-						{"$sort": {
-							"sends": -1,
-							"_id": 1
-						}},
-						{"$skip": skip},
-						{"$limit": limit}
-					]
+				{"$unwind": "$creator_info"},
+				{"$project": {
+					"name": "$level_info.name",
+					"creator": "$creator_info.name",
+					"creatorID": "$creator_info.accountID",
+					"levelID": "$_id",
+					"sends": "$send_count"
 				}}
-			]
+			])
+
+		base_pipeline.append({
+			"$facet": {
+				"total": [{"$count": "count"}],
+				"data": [
+					{"$sort": {"sends": -1, "_id": 1}},
+					{"$skip": skip},
+					{"$limit": limit}
+				]
+			}
+		})
+
+		return base_pipeline
+
 
 	async def get_page_data(self) -> tuple[list[dict], int]:
 		skip = self.current_page * self.page_size
