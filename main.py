@@ -422,6 +422,7 @@ class TypeSelect(discord.ui.Select):
 		self._view.type = LeaderboardType[self.values[0]]
 		self._view.current_page = 0
 		self._view.searched_id = None
+		self._view.update_filter_select()
 		self._view.update_buttons()
 		await interaction.response.edit_message(embed=await self._view.get_embed(), view=self._view)
 
@@ -434,7 +435,7 @@ class FilterSelect(discord.ui.Select):
 			discord.SelectOption(label="Classic", value="CLASSIC", description="Show classic levels"),
 			discord.SelectOption(label="Platformer", value="PLATFORMER", description="Show platformer levels"),
 		]
-		super().__init__(placeholder="Select search filters...", options=options)
+		super().__init__(placeholder="Select search filters...", options=options, max_values=4)
 
 	async def callback(self, interaction: discord.Interaction):
 		self._view.filters = self.values
@@ -476,11 +477,9 @@ class LeaderboardView(View):
 		self.filters = []
 		self.searched_id = None
 
-		# Add type selector
 		self.type_select = TypeSelect(self)
 		self.add_item(self.type_select)
 		self.filter_select = FilterSelect(self)
-		self.add_item(self.filter_select)
 
 	def get_pipeline_for_type(self, skip: int, limit: int) -> list[dict]:
 		base_pipeline = [
@@ -497,7 +496,7 @@ class LeaderboardView(View):
 			{"$unwind": "$level_info"}
 		]
 
-		if self.filters:
+		if self.filters and self.type == LeaderboardType.LEVELS:
 			match_conditions = {}
 			if self.filters.__contains__("RATED") != self.filters.__contains__("UNRATED"):
 				base_pipeline.append({
@@ -512,10 +511,12 @@ class LeaderboardView(View):
 					match_conditions["rate_info"] = {"$ne": []}
 				elif "UNRATED" in self.filters:
 					match_conditions["rate_info"] = {"$eq": []}
-			if "PLATFORMER" in self.filters:
-				match_conditions["level_info.platformer"] = True
-			if "CLASSIC" in self.filters:
-				match_conditions["level_info.platformer"] = False
+
+			if self.filters.__contains__("PLATFORMER") != self.filters.__contains__("CLASSIC"):
+				if "PLATFORMER" in self.filters:
+					match_conditions["level_info.platformer"] = True
+				elif "CLASSIC" in self.filters:
+					match_conditions["level_info.platformer"] = False
 
 			if match_conditions:
 				base_pipeline.append({"$match": match_conditions})
@@ -659,13 +660,29 @@ class LeaderboardView(View):
 		self.prev_button.disabled = self.current_page == 0
 		self.next_button.disabled = self.current_page >= self.max_pages - 1
 
+	def update_filter_select(self):
+		if self.type == LeaderboardType.LEVELS:
+			if self.filter_select not in self.children:
+				self.add_item(self.filter_select)
+		else:
+			if self.filter_select in self.children:
+				self.remove_item(self.filter_select)
+
 	async def get_embed(self) -> discord.Embed:
 		page_data, self.total_count = await self.get_page_data()
 		self.max_pages = ceil(self.total_count / self.page_size)
 
+		rate_filter = ""
+		level_filter = ""
+		if self.filters:
+			if self.filters.__contains__("RATED") != self.filters.__contains__("UNRATED"):
+				rate_filter = ("rated" if self.filters.__contains__("RATED") else "unrated") + " "
+			if self.filters.__contains__("PLATFORMER") != self.filters.__contains__("CLASSIC"):
+				level_filter = ("platformer" if self.filters.__contains__("PLATFORMER") else "classic") + " "
+
 		embed = discord.Embed(
 			title=f"{self.type.value} Leaderboard",
-			description=f"Most {'level sends by creator' if self.type == LeaderboardType.CREATORS else 'sent levels'}",
+			description=f"Most {'level sends by creator' if self.type == LeaderboardType.CREATORS else f'sent {rate_filter}{level_filter}levels'}",
 			color=0x00ff00
 		)
 
