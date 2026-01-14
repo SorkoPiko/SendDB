@@ -133,6 +133,7 @@ def calculateNewSends(levels: list[int], rated_levels: list[int]) -> tuple[list[
 
 	previous_levels = levels.copy()
 	previous_rated_levels = rated_levels.copy()
+	save_previous_data(previous_levels, previous_rated_levels)
 
 	return sends, rates
 
@@ -355,7 +356,7 @@ class SendBot(commands.Bot):
 			else:
 				self.trendingMessage = await self.trendingChannel.send(embed=embed, content=content)
 				self.trendingMessageID = self.trendingMessage.id
-				save_previous_data(previous_levels)
+				save_previous_data(previous_levels, previous_rated_levels)
 
 		except Exception as e:
 			print(f"Error updating trending message: {e}")
