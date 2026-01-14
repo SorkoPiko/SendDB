@@ -1,10 +1,11 @@
+import asyncio
 from datetime import datetime
 from os import environ
 
-import requests
+import aiohttp
 from dotenv import load_dotenv
 from pymongo import UpdateOne
-from tqdm import tqdm
+from tqdm.asyncio import tqdm
 
 import utils
 from db import SendDB
@@ -46,77 +47,95 @@ pipeline = [
 cursor = info_collection.aggregate(pipeline)
 ids = [doc["_id"] for doc in cursor]
 
-info_operations = []
-rate_operations = []
-for id in tqdm(ids, desc="Scraping levels", unit="level"):
-	response = requests.get(
-		f'https://history.geometrydash.eu/api/v1/level/{id}'
-	)
+async def fetch_level(session, level_id, semaphore):
+	async with semaphore:
+		try:
+			async with session.get(f'https://history.geometrydash.eu/api/v1/level/{level_id}') as response:
+				if response.status != 200:
+					print(f"Failed to fetch data for ID {level_id}: {response.status}")
+					return None
+				data = await response.json()
+				if data['online_id'] != level_id:
+					print(f"Data mismatch for ID {level_id}: received online_id {data['online_id']}")
+					return None
+				return level_id, data
+		except Exception as e:
+			print(f"Error fetching ID {level_id}: {e}")
+			return None
 
-	if response.status_code != 200:
-		print(f"Failed to fetch data for ID {id}: {response.status_code}")
-		continue
+async def process_levels():
+	info_operations = []
+	rate_operations = []
 
-	data = response.json()
+	semaphore = asyncio.Semaphore(20)
 
-	if data['online_id'] != id:
-		print(f"Data mismatch for ID {id}: received online_id {data['online_id']}")
-		continue
+	async with aiohttp.ClientSession() as session:
+		tasks = [fetch_level(session, level_id, semaphore) for level_id in ids]
 
-	# info
-	length = data.get('cache_length', 0)
-	update_fields = {
-		'length': length,
-		'platformer': (length == 5)
-	}
-	info_operations.append(
-		UpdateOne(
-			{'_id': id},
-			{'$set': update_fields}
-		)
-	)
+		for coro in tqdm.as_completed(tasks, desc="Scraping levels", unit="level", total=len(ids)):
+			result = await coro
+			if result is None:
+				continue
 
-	# rates
-	stars = data.get("cache_stars", 0)
-	points = min(stars, 1) + min(data.get("cache_featured", 0), 1) + data.get("cache_epic", 0)
-	if points > 0:
-		records = sorted(data.get("records", []), key=lambda r: r.get("real_date", ""))
+			level_id, data = result
 
-		latest = records[-1]
-		demon = utils.DEMON_MAP.get(latest.get("demon_type", 3), 0)
-
-		for record in records:
-			if (record.get("stars", 0) or 0) <= 0: continue
-
-			timestamp = datetime.fromisoformat(record["real_date"].replace("Z", "+00:00"))
-			rate_operations.append(
+			# info
+			length = data.get('cache_length', 0)
+			update_fields = {
+				'length': length,
+				'platformer': (length == 5)
+			}
+			info_operations.append(
 				UpdateOne(
-					{'_id': id},
-					{
-						'$setOnInsert': {
-							'timestamp': timestamp,
-							'accurate': False
-						},
-						'$set': {
-							'difficulty': demon,
-							'stars': stars,
-							'points': points
-						}
-					},
-					upsert=True
+					{'_id': level_id},
+					{'$set': update_fields}
 				)
 			)
-			break
 
-	if len(info_operations) > 100:
+			# rates
+			stars = data.get("cache_stars", 0)
+			points = min(stars, 1) + min(data.get("cache_featured", 0), 1) + data.get("cache_epic", 0)
+			if points > 0:
+				records = sorted(data.get("records", []), key=lambda r: r.get("real_date", ""))
+
+				latest = records[-1]
+				demon = utils.DEMON_MAP.get(latest.get("demon_type", 3), 0)
+
+				for record in records:
+					if (record.get("stars", 0) or 0) <= 0:
+						continue
+
+					timestamp = datetime.fromisoformat(record["real_date"].replace("Z", "+00:00"))
+					rate_operations.append(
+						UpdateOne(
+							{'_id': level_id},
+							{
+								'$setOnInsert': {
+									'timestamp': timestamp,
+									'accurate': False
+								},
+								'$set': {
+									'difficulty': demon,
+									'stars': stars,
+									'points': points
+								}
+							},
+							upsert=True
+						)
+					)
+					break
+
+			if len(info_operations) > 100:
+				info_collection.bulk_write(info_operations)
+				info_operations = []
+
+			if len(rate_operations) > 100:
+				rate_collection.bulk_write(rate_operations)
+				rate_operations = []
+
+	if info_operations:
 		info_collection.bulk_write(info_operations)
-		info_operations = []
-
-	if len(rate_operations) > 100:
+	if rate_operations:
 		rate_collection.bulk_write(rate_operations)
-		rate_operations = []
 
-if info_operations:
-	info_collection.bulk_write(info_operations)
-if rate_operations:
-	rate_collection.bulk_write(rate_operations)
+asyncio.run(process_levels())
