@@ -632,6 +632,41 @@ class LeaderboardView(View):
 					"_id": "$levelID",
 					"sends": {"$sum": 1}
 				}},
+				{"$lookup": {
+					"from": "info",
+					"localField": "_id",
+					"foreignField": "_id",
+					"as": "level_info"
+				}},
+				{"$unwind": "$level_info"}
+			]
+
+			if self.filters:
+				match_conditions = {}
+				if self.filters.__contains__("RATED") != self.filters.__contains__("UNRATED"):
+					pipeline.append({
+						"$lookup": {
+							"from": "rates",
+							"localField": "_id",
+							"foreignField": "_id",
+							"as": "rate_info"
+						}
+					})
+					if "RATED" in self.filters:
+						match_conditions["rate_info"] = {"$ne": []}
+					elif "UNRATED" in self.filters:
+						match_conditions["rate_info"] = {"$eq": []}
+
+				if self.filters.__contains__("PLATFORMER") != self.filters.__contains__("CLASSIC"):
+					if "PLATFORMER" in self.filters:
+						match_conditions["level_info.platformer"] = True
+					elif "CLASSIC" in self.filters:
+						match_conditions["level_info.platformer"] = False
+
+				if match_conditions:
+					pipeline.append({"$match": match_conditions})
+
+			pipeline.extend([
 				{"$sort": {
 					"sends": -1,
 					"_id": 1
@@ -647,7 +682,7 @@ class LeaderboardView(View):
 						"$indexOfArray": ["$position", search_id]
 					}
 				}}
-			]
+			])
 
 		result = self.db.raw_pipeline("sends", pipeline)
 		if not result or result[0]["index"] == -1:
