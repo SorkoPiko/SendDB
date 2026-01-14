@@ -105,7 +105,6 @@ def calculateNewSends(levels: list[int], rated_levels: list[int]) -> tuple[list[
 		previous_rated_levels = rated_levels.copy()
 		return filtered_levels.copy(), rated_levels.copy()
 
-	sends = []
 	rates = [level for level in rated_levels if level not in previous_rated_levels]
 
 	prev_levels_working = previous_levels.copy()
@@ -118,19 +117,22 @@ def calculateNewSends(levels: list[int], rated_levels: list[int]) -> tuple[list[
 
 	check_limit = len(filtered_levels) - ignore_count
 
+	max_bumps = 0
+
 	for i in range(check_limit):
 		level = filtered_levels[i]
-
 		prev_index = prev_levels_working.index(level) if level in prev_levels_working else float('inf')
 
 		if i < prev_index:
-			sends.append(level)
+			bumps_after = i
+			total_bumps_including_this = bumps_after + 1
+			max_bumps = max(max_bumps, total_bumps_including_this)
 
+	sends = filtered_levels[:max_bumps]
 	sends.reverse()
 
 	previous_levels = levels.copy()
 	previous_rated_levels = rated_levels.copy()
-	save_previous_data(previous_levels, previous_rated_levels)
 
 	return sends, rates
 
