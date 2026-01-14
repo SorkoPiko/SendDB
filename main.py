@@ -95,12 +95,49 @@ previous_data = load_previous_data()
 previous_levels = previous_data.get("previous_levels", [])
 previous_rated_levels = previous_data.get("previous_rated_levels", [])
 
+def calculateNewSends(levels: list[int], rated_levels: list[int]) -> tuple[list[int], list[int]]:
+	global previous_levels, previous_rated_levels
+
+	filtered_levels = [level for level in levels if level not in rated_levels]
+
+	if not previous_levels:
+		previous_levels = levels.copy()
+		previous_rated_levels = rated_levels.copy()
+		return filtered_levels.copy(), rated_levels.copy()
+
+	sends = []
+	rates = [level for level in rated_levels if level not in previous_rated_levels]
+
+	prev_levels_working = previous_levels.copy()
+	ignore_count = 0
+
+	for level in rates:
+		if level in prev_levels_working:
+			prev_levels_working.remove(level)
+			ignore_count += 1
+
+	check_limit = len(filtered_levels) - ignore_count
+
+	for i in range(check_limit):
+		level = filtered_levels[i]
+
+		prev_index = prev_levels_working.index(level) if level in prev_levels_working else float('inf')
+
+		if i < prev_index:
+			sends.append(level)
+
+	sends.reverse()
+
+	previous_levels = levels.copy()
+	previous_rated_levels = rated_levels.copy()
+	save_previous_data(previous_levels, previous_rated_levels)
+
+	return sends, rates
+
 async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[dict], rated_creators: list[dict]):
 	if not levels or not creators or not rated_levels or not rated_creators:
 		print("No data received.")
 		return
-	global previous_levels
-	global previous_rated_levels
 
 	timestamp = datetime.now(UTC)
 
@@ -109,6 +146,8 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 	level_ids = [level["_id"] for level in levels]
 	rated_level_ids = [level["_id"] for level in rated_levels]
 
+	new_send_ids, new_rate_ids = calculateNewSends(level_ids, rated_level_ids)
+
 	sends = []
 	rates = []
 	unrates = []
@@ -116,49 +155,40 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 	sendMessageInfo = []
 	rateMessageInfo = []
 
-	filtered_levels = [level for level in levels if level["_id"] not in rated_level_ids] # should never match, just a sanity check
-	filtered_level_ids = [level["_id"] for level in filtered_levels]
-
-	for i in utils.find_difference(
-		utils.subtract_lists(previous_levels, rated_level_ids),
-		filtered_level_ids
-	):
-		level = filtered_levels[i]
-		level_id = level["_id"]
+	for level_id in new_send_ids:
+		level = next(l for l in levels if l["_id"] == level_id)
 		creator_id = level["creatorID"]
-		creator_name = creatorMap[creator_id]
-		if not creator_name:
-			creator_name = "Unknown"
+		creator_name = creatorMap.get(creator_id, "Unknown")
 
-		sends += [{"levelID": level_id, "timestamp": timestamp}]
-		info += [{"_id": level_id, "name": level["name"], "creator": creator_id, "length": level["length"], "platformer": level["platformer"]}]
-		sendMessageInfo += [{
+		sends.append({"levelID": level_id, "timestamp": timestamp})
+		info.append({"_id": level_id, "name": level["name"], "creator": creator_id, "length": level["length"], "platformer": level["platformer"]})
+		sendMessageInfo.append({
 			"_id": level_id,
 			"name": level["name"],
 			"creator": creator_name,
-			"creatorID": accountMap[creator_id],
+			"creatorID": accountMap.get(creator_id, 0),
 			"playerID": creator_id,
 			"sends": 1
-		}]
+		})
 
-	add, remove = utils.find_additions(previous_rated_levels, rated_level_ids)
-	for i in add:
-		level = rated_levels[i]
-		level_id = level["_id"]
+	for level_id in new_rate_ids:
+		level = next(l for l in rated_levels if l["_id"] == level_id)
 		creator_id = level["creatorID"]
-		rates += [{
+
+		rates.append({
 			"_id": level_id,
 			"difficulty": level["difficulty"],
 			"stars": level["stars"],
 			"points": level["points"],
 			"timestamp": timestamp
-		}]
-		info += [{"_id": level_id, "name": level["name"], "creator": creator_id, "length": level["length"], "platformer": level["platformer"]}]
+		})
+		info.append({"_id": level_id, "name": level["name"], "creator": creator_id, "length": level["length"], "platformer": level["platformer"]})
 
 		stars = DIFFICULTIES.get(level["stars"], "Unknown")
-		if level["stars"] == 10: stars = DEMON_DIFFICULTY_MAP.get(level["difficulty"], "") + stars
+		if level["stars"] == 10:
+			stars = DEMON_DIFFICULTY_MAP.get(level["difficulty"], "") + stars
 
-		rateMessageInfo += [{
+		rateMessageInfo.append({
 			"_id": level_id,
 			"name": level["name"],
 			"creator": creatorMap.get(creator_id, "Unknown"),
@@ -168,18 +198,10 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 			"points": level["points"],
 			"rating": RATINGS.get(level["points"], "Unknown"),
 			"sends": 0
-		}]
-
-	for i in remove:
-		unrates += [previous_rated_levels[i]]
-
-	previous_levels = level_ids
-	previous_rated_levels = rated_level_ids
-	save_previous_data(previous_levels, previous_rated_levels)
+		})
 
 	db.add_sends(sends)
 	db.add_rates(rates)
-	db.remove_rates(unrates)
 	db.add_info(info)
 
 	if sends or rates or unrates:
