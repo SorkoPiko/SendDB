@@ -82,10 +82,11 @@ def load_previous_data():
 			return data
 	return {}
 
-def save_previous_data(levels, rated_levels):
+def save_previous_data(levels, rated_levels, rate_cache):
 	data = {
 		"previous_levels": levels,
 		"previous_rated_levels": rated_levels,
+		"rate_cache": rate_cache,
 		"trending_message": client.trendingMessageID
 	}
 	with open("previous_data.json", "w") as file:
@@ -93,10 +94,13 @@ def save_previous_data(levels, rated_levels):
 
 previous_data = load_previous_data()
 previous_levels = previous_data.get("previous_levels", [])
+rate_cache = previous_data.get("pending_rates", {})
 previous_rated_levels = previous_data.get("previous_rated_levels", [])
 
-def calculateNewSends(levels: list[int], rated_levels: list[int]) -> tuple[list[int], list[int]]:
-	global previous_levels, previous_rated_levels
+RATE_CACHE_TIME = 20
+
+def calculateNewSends(levels: list[int], rated_levels: list[int], current_time: float) -> tuple[list[int], list[int]]:
+	global previous_levels, previous_rated_levels, rate_cache
 
 	filtered_levels = [level for level in levels if level not in rated_levels]
 
@@ -106,17 +110,22 @@ def calculateNewSends(levels: list[int], rated_levels: list[int]) -> tuple[list[
 		return filtered_levels.copy(), rated_levels.copy()
 
 	rates = [level for level in rated_levels if level not in previous_rated_levels]
+	for level in rates:
+		rate_cache[level] = current_time
+
+	expired_levels = [level for level, timestamp in rate_cache.items() if current_time - timestamp > RATE_CACHE_TIME]
+	for level in expired_levels:
+		del rate_cache[level]
 
 	prev_levels_working = previous_levels.copy()
 	ignore_count = 0
 
-	for level in rates:
+	for level in rate_cache.keys():
 		if level in prev_levels_working:
 			prev_levels_working.remove(level)
 			ignore_count += 1
 
 	check_limit = len(filtered_levels) - ignore_count
-
 	max_bumps = 0
 
 	for i in range(check_limit):
@@ -133,7 +142,7 @@ def calculateNewSends(levels: list[int], rated_levels: list[int]) -> tuple[list[
 
 	previous_levels = levels.copy()
 	previous_rated_levels = rated_levels.copy()
-	save_previous_data(previous_levels, previous_rated_levels)
+	save_previous_data(previous_levels, previous_rated_levels, rate_cache)
 
 	return sends, rates
 
@@ -149,7 +158,7 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 	level_ids = [level["_id"] for level in levels]
 	rated_level_ids = [level["_id"] for level in rated_levels]
 
-	new_send_ids, new_rate_ids = calculateNewSends(level_ids, rated_level_ids)
+	new_send_ids, new_rate_ids = calculateNewSends(level_ids, rated_level_ids, timestamp.timestamp())
 
 	sends = []
 	rates = []
@@ -356,7 +365,7 @@ class SendBot(commands.Bot):
 			else:
 				self.trendingMessage = await self.trendingChannel.send(embed=embed, content=content)
 				self.trendingMessageID = self.trendingMessage.id
-				save_previous_data(previous_levels, previous_rated_levels)
+				save_previous_data(previous_levels, previous_rated_levels, rate_cache)
 
 		except Exception as e:
 			print(f"Error updating trending message: {e}")
