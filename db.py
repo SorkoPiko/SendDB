@@ -16,27 +16,12 @@ class SendDB:
 		follows = self.get_collection("data", "follows")
 		follows.create_index([("user_id", 1), ("type", 1), ("followed_id", 1)], unique=True)
 
-		# Create indexes for user suggestions
-		suggestions = self.get_collection("data", "user_suggestions")
-		suggestions.create_index([("user_id", 1), ("level_id", 1)], unique=True)
-		suggestions.create_index("level_id")
-		suggestions.create_index("processed_by_mod")
-		suggestions.create_index("timestamp")
-
-		# Create indexes for mod ratings
-		mod_ratings = self.get_collection("data", "mod_ratings")
-		mod_ratings.create_index([("mod_id", 1), ("level_id", 1)], unique=True)
-		mod_ratings.create_index("level_id")
-
-		# Create indexes for user weights
 		weights = self.get_collection("data", "user_weights")
 		weights.create_index("user_id", unique=True)
 		weights.create_index("weight")
 
-		# Create indexes for moderators
-		moderators = self.get_collection("data", "moderators")
-		moderators.create_index("discord_id", unique=True)
-		moderators.create_index("username")
+		sends = self.get_collection("data", "sends")
+		sends.create_index("levelID")
 
 	def get_database(self, db_name: str) -> Database:
 		return self.client[db_name]
