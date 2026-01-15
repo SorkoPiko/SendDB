@@ -16,16 +16,16 @@ def test_send_results(levels: list[int], rated_levels: list[int], current_time: 
 
 	rates = [level for level in rated_levels if level not in previous_rated_levels]
 	for level in rates:
-		pending_rates[level] = current_time
+		rate_cache[level] = current_time
 
-	expired_levels = [level for level, timestamp in pending_rates.items() if current_time - timestamp > RATE_CACHE_TIME]
+	expired_levels = [level for level, timestamp in rate_cache.items() if current_time - timestamp > RATE_CACHE_TIME]
 	for level in expired_levels:
-		del pending_rates[level]
+		del rate_cache[level]
 
 	prev_levels_working = previous_levels.copy()
 	ignore_count = 0
 
-	for level in pending_rates.keys():
+	for level in rate_cache.keys():
 		if level in prev_levels_working:
 			prev_levels_working.remove(level)
 			ignore_count += 1
