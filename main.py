@@ -1233,7 +1233,7 @@ async def check_creator(interaction: discord.Interaction, creator: str):
 		)
 		return
 
-	creatorData = db.get_creator_stats_from_view(creator_numeric_id)
+	creatorData = db.get_creator_info(creator_numeric_id)
 	if not creatorData:
 		await interaction.response.send_message(
 			f"❌ Creator `{creator_numeric_id}` has no sends.",
