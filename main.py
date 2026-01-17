@@ -288,6 +288,7 @@ class SendBot(commands.Bot):
 		self.trendingChannel = (self.get_channel(int(environ.get('TRENDING_CHANNEL_ID'))) or await self.fetch_channel(int(environ.get('TRENDING_CHANNEL_ID'))))
 		if self.trendingChannel:
 			self.update_trending_message.start()
+		self.update_views.start()
 
 		checker.start(asyncio.get_running_loop())
 		print(f"We have logged in as {self.user}.")
@@ -368,7 +369,14 @@ class SendBot(commands.Bot):
 				save_previous_data(previous_levels, previous_rated_levels, rate_cache)
 
 		except Exception as e:
-			print(f"Error updating trending message: {e}")
+			logging.error(f"Error updating trending message: {e}", exc_info=True)
+
+	@tasks.loop(minutes=1)
+	async def update_views(self):
+		try:
+			db.refresh_materialized_views()
+		except Exception as e:
+			logging.error(f"Error refreshing materialized views: {e}", exc_info=True)
 
 	async def get_full_command_embed(self, command_name: str) -> str:
 		return f"</{command_name}:{await self.get_command_id(command_name)}>" if await self.get_command_id(command_name) else f"`/{command_name}`"
@@ -385,7 +393,7 @@ async def sendRandomTip(interaction: discord.Interaction, exclude: list[int] = N
 	tips = [client.tips[i] for i in range(len(client.tips)) if i not in exclude]
 
 	await interaction.followup.send(
-		random.choice(tips) + "\n-# This is a tip. Feel free to ignore it if you don't need it.",
+		random.choice(tips),
 		ephemeral=True,
 	)
 
@@ -492,10 +500,6 @@ class LeaderboardView(View):
 
 	def get_pipeline_for_type(self, skip: int, limit: int) -> list[dict]:
 		base_pipeline = [
-			{"$group": {
-				"_id": "$levelID",
-				"send_count": {"$sum": 1}
-			}},
 			{"$lookup": {
 				"from": "info",
 				"localField": "_id",
@@ -570,6 +574,15 @@ class LeaderboardView(View):
 			])
 
 		base_pipeline.append({
+			"$setWindowFields": {
+				"sortBy": {"sends": -1},
+				"output": {
+					"rank": {"$denseRank": {}}
+				}
+			}
+		})
+
+		base_pipeline.append({
 			"$facet": {
 				"total": [{"$count": "count"}],
 				"data": [
@@ -582,12 +595,11 @@ class LeaderboardView(View):
 
 		return base_pipeline
 
-
 	async def get_page_data(self) -> tuple[list[dict], int]:
 		skip = self.current_page * self.page_size
 		pipeline = self.get_pipeline_for_type(skip, self.page_size)
 
-		result = self.db.raw_pipeline("sends", pipeline)
+		result = self.db.raw_pipeline("level_stats", pipeline)
 		if not result or not result[0]["total"]:
 			return [], 0
 
@@ -597,10 +609,6 @@ class LeaderboardView(View):
 		"""Find the page number containing the given ID"""
 		if self.type == LeaderboardType.CREATORS:
 			pipeline = [
-				{"$group": {
-					"_id": "$levelID",
-					"count": {"$sum": 1}
-				}},
 				{"$lookup": {
 					"from": "info",
 					"localField": "_id",
@@ -610,7 +618,7 @@ class LeaderboardView(View):
 				{"$unwind": "$level_info"},
 				{"$group": {
 					"_id": "$level_info.creator",
-					"sends": {"$sum": "$count"}
+					"sends": {"$sum": "$send_count"}
 				}},
 				{"$lookup": {
 					"from": "creators",
@@ -637,10 +645,6 @@ class LeaderboardView(View):
 			]
 		else:
 			pipeline = [
-				{"$group": {
-					"_id": "$levelID",
-					"sends": {"$sum": 1}
-				}},
 				{"$lookup": {
 					"from": "info",
 					"localField": "_id",
@@ -677,7 +681,7 @@ class LeaderboardView(View):
 
 			pipeline.extend([
 				{"$sort": {
-					"sends": -1,
+					"send_count": -1,
 					"_id": 1
 				}},
 				{"$group": {
@@ -693,7 +697,7 @@ class LeaderboardView(View):
 				}}
 			])
 
-		result = self.db.raw_pipeline("sends", pipeline)
+		result = self.db.raw_pipeline("level_stats", pipeline)
 		if not result or result[0]["index"] == -1:
 			return None
 
@@ -744,13 +748,13 @@ class LeaderboardView(View):
 
 			if self.type == LeaderboardType.CREATORS:
 				embed.add_field(
-					name=f"{medal}#{idx}. {entry['name']} ({entry['accountID']})",
+					name=f"{medal}#{entry['rank']}. {entry['name']} ({entry['accountID']})",
 					value=f"Total Sends: **{entry['sends']}** over `{entry['level_count']}` level{'s' if entry['level_count'] != 1 else ''}",
 					inline=False
 				)
 			else:
 				embed.add_field(
-					name=f"{medal}#{idx}. {entry['name']} ({entry['levelID']})",
+					name=f"{medal}#{entry['rank']}. {entry['name']} ({entry['levelID']})",
 					value=f"By **{entry['creator']}** ({entry['creatorID']})\nTotal Sends: **{entry['sends']}**",
 					inline=False
 				)
@@ -1167,7 +1171,7 @@ async def check_level(interaction: discord.Interaction, level: str):
 		await interaction.response.send_message(f"❌ Invalid level ID: `{level}`. Please provide a valid level ID or select from the autocomplete list.", ephemeral=True)
 		return
 
-	sendData = db.get_sends([level_numeric_id])
+	sendData = db.get_level_stats([level_numeric_id])
 	if level_numeric_id not in sendData:
 		await interaction.response.send_message(f"{'⚠️ **WARNING**: This level was created before the bot started tracking levels. Any sends before the bot started operating have not been counted.\n\n' if level_numeric_id < OLDEST_LEVEL else ''}❌ Level `{level_numeric_id}` has no sends.", ephemeral=True)
 		return
@@ -1229,7 +1233,7 @@ async def check_creator(interaction: discord.Interaction, creator: str):
 		)
 		return
 
-	creatorData = db.get_creator_info(creator_numeric_id)
+	creatorData = db.get_creator_stats_from_view(creator_numeric_id)
 	if not creatorData:
 		await interaction.response.send_message(
 			f"❌ Creator `{creator_numeric_id}` has no sends.",

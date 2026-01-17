@@ -23,6 +23,10 @@ class SendDB:
 		sends = self.get_collection("data", "sends")
 		sends.create_index("levelID")
 
+		level_stats = self.get_collection("data", "level_stats")
+		level_stats.create_index([("send_count", -1)])
+		level_stats.create_index([("trending_score", -1)])
+
 	def get_database(self, db_name: str) -> Database:
 		return self.client[db_name]
 
@@ -263,47 +267,12 @@ class SendDB:
 		).sort("name", 1).limit(25))
 
 	def get_trending_levels(self, skip: int = 0, limit: int = 10, get_total: bool = False) -> tuple[list[dict], int]:
-		sends = self.get_collection("data", "sends")
+		level_stats = self.get_collection("data", "level_stats")
 
 		base_pipeline = [
 			{
 				"$match": {
-					"timestamp": {
-						"$gte": datetime.now(UTC) - timedelta(days=30)
-					}
-				}
-			},
-			{
-				"$addFields": {
-					"age_hours": {
-						"$divide": [
-							{"$subtract": [datetime.now(UTC), "$timestamp"]},
-							1000 * 60 * 60
-						]
-					}
-				}
-			},
-			{
-				"$group": {
-					"_id": "$levelID",
-					"score": {
-						"$sum": {
-							"$multiply": [
-								25000,
-								{
-									"$divide": [
-										1,
-										{"$pow": [
-											{"$add": [{"$divide": ["$age_hours", 24]}, 2]},
-											1
-										]}
-									]
-								}
-							]
-						}
-					},
-					"recent_sends": {"$sum": 1},
-					"latest_send": {"$max": "$timestamp"}
+					"trending_score": {"$gt": 0}
 				}
 			},
 			{
@@ -350,7 +319,7 @@ class SendDB:
 								"levelID": "$_id",
 								"creator": "$creator_info.name",
 								"creatorID": "$creator_info._id",
-								"score": 1,
+								"score": "$trending_score",
 								"recent_sends": 1,
 								"latest_send": 1
 							}
@@ -362,7 +331,7 @@ class SendDB:
 				}}
 			]
 
-			result = list(sends.aggregate(pipeline))
+			result = list(level_stats.aggregate(pipeline))
 			if not result or not result[0]["total"]:
 				return [], 0
 
@@ -393,7 +362,7 @@ class SendDB:
 						"levelID": "$_id",
 						"creator": "$creator_info.name",
 						"creatorID": "$creator_info._id",
-						"score": 1,
+						"score": "$trending_score",
 						"recent_sends": 1,
 						"latest_send": 1
 					}
@@ -402,7 +371,7 @@ class SendDB:
 				{"$limit": limit}
 			]
 
-			return list(sends.aggregate(pipeline)), None
+			return list(level_stats.aggregate(pipeline)), None
 
 	# User suggestion methods
 	def add_user_suggestion(self, user_id: int, level_id: int, difficulty: int, rating: int):
@@ -954,3 +923,186 @@ class SendDB:
 	def get_stat(self, stat: str) -> int:
 		stats = self.get_collection("data", "stats")
 		return stats.find_one({"_id": stat})["value"]
+
+	def refresh_materialized_views(self):
+		self._refresh_level_send_counts()
+		self._refresh_creator_stats()
+
+	def _refresh_level_send_counts(self):
+		sends = self.get_collection("data", "sends")
+
+		current_time = datetime.now(UTC)
+		thirty_days_ago = current_time - timedelta(days=30)
+
+		pipeline = [
+			{
+				"$facet": {
+					"all_time": [
+						{
+							"$group": {
+								"_id": "$levelID",
+								"send_count": {"$sum": 1},
+								"latest_send": {"$max": "$timestamp"}
+							}
+						}
+					],
+					"trending": [
+						{
+							"$match": {
+								"timestamp": {"$gte": thirty_days_ago}
+							}
+						},
+						{
+							"$addFields": {
+								"age_hours": {
+									"$divide": [
+										{"$subtract": [current_time, "$timestamp"]},
+										1000 * 60 * 60
+									]
+								}
+							}
+						},
+						{
+							"$group": {
+								"_id": "$levelID",
+								"trending_score": {
+									"$sum": {
+										"$multiply": [
+											25000,
+											{
+												"$divide": [
+													1,
+													{"$pow": [
+														{"$add": [{"$divide": ["$age_hours", 24]}, 2]},
+														1
+													]}
+												]
+											}
+										]
+									}
+								},
+								"recent_sends": {"$sum": 1}
+							}
+						}
+					]
+				}
+			},
+			{
+				"$project": {
+					"combined": {
+						"$concatArrays": ["$all_time", "$trending"]
+					}
+				}
+			},
+			{"$unwind": "$combined"},
+			{"$replaceRoot": {"newRoot": "$combined"}},
+			{
+				"$group": {
+					"_id": "$_id",
+					"send_count": {"$max": "$send_count"},
+					"latest_send": {"$max": "$latest_send"},
+					"trending_score": {"$max": "$trending_score"},
+					"recent_sends": {"$max": "$recent_sends"}
+				}
+			},
+			{
+				"$set": {
+					"last_updated": current_time,
+					"trending_score": {"$ifNull": ["$trending_score", 0]},
+					"recent_sends": {"$ifNull": ["$recent_sends", 0]}
+				}
+			},
+			{
+				"$setWindowFields": {
+					"sortBy": {"send_count": -1},
+					"output": {
+						"rank": {
+							"$denseRank": {}
+						}
+					}
+				}
+			},
+			{
+				"$merge": {
+					"into": "level_stats",
+					"whenMatched": "replace",
+					"whenNotMatched": "insert"
+				}
+			}
+		]
+
+		sends.aggregate(pipeline)
+
+	def _refresh_creator_stats(self):
+		info = self.get_collection("data", "info")
+
+		pipeline = [
+			{
+				"$lookup": {
+					"from": "sends",
+					"localField": "_id",
+					"foreignField": "levelID",
+					"as": "sends"
+				}
+			},
+			{
+				"$group": {
+					"_id": "$creator",
+					"level_count": {"$sum": 1},
+					"send_count": {"$sum": {"$size": "$sends"}},
+					"latest_send": {"$max": {"$max": "$sends.timestamp"}}
+				}
+			},
+			{
+				"$set": {
+					"last_updated": datetime.now(UTC)
+				}
+			},
+			{
+				"$setWindowFields": {
+					"sortBy": {"send_count": -1},
+					"output": {
+						"rank": {
+							"$denseRank": {}
+						}
+					}
+				}
+			},
+			{
+				"$merge": {
+					"into": "creator_stats",
+					"whenMatched": "replace",
+					"whenNotMatched": "insert"
+				}
+			}
+		]
+
+		info.aggregate(pipeline)
+
+	def get_level_stats(self, level_ids: list[int]) -> dict:
+		level_stats = self.get_collection("data", "level_stats")
+		results = level_stats.find({"_id": {"$in": level_ids}})
+		return {
+			result["_id"]: {
+				"count": result["send_count"],
+				"latest_timestamp": result["latest_send"],
+				"rank": result["rank"],
+				"trending_score": result.get("trending_score", 0),
+				"recent_sends": result.get("recent_sends", 0)
+			}
+			for result in results
+		}
+
+	def get_creator_stats_from_view(self, creator_id: int) -> dict:
+		creator_stats = self.get_collection("data", "creator_stats")
+		stats = creator_stats.find_one({"_id": creator_id})
+
+		if not stats:
+			return None
+
+		return {
+			"send_count": stats["send_count"],
+			"level_count": stats["level_count"],
+			"latest_send": stats["latest_send"],
+			"rank": stats["rank"]
+		}
