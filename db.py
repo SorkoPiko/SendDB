@@ -1013,6 +1013,29 @@ class SendDB:
 				}
 			},
 			{
+				"$lookup": {
+					"from": "rates",
+					"localField": "_id",
+					"foreignField": "_id",
+					"as": "rate"
+				}
+			},
+			{
+				"$lookup": {
+					"from": "info",
+					"localField": "_id",
+					"foreignField": "_id",
+					"as": "info"
+				}
+			},
+			{"$unwind": "$info"},
+			{
+				"$addFields": {
+					"has_rate": {"$gt": [{"$size": "$rate"}, 0]},
+					"platformer": "$info.platformer"
+				}
+			},
+			{
 				"$setWindowFields": {
 					"sortBy": {"send_count": -1},
 					"output": {
@@ -1020,6 +1043,56 @@ class SendDB:
 							"$denseRank": {}
 						}
 					}
+				}
+			},
+			{
+				"$setWindowFields": {
+					"partitionBy": "$has_rate",
+					"sortBy": {"send_count": -1},
+					"output": {
+						"rate_rank": {
+							"$denseRank": {}
+						}
+					}
+				}
+			},
+			{
+				"$setWindowFields": {
+					"partitionBy": {"platformer": "$platformer"},
+					"sortBy": {"send_count": -1},
+					"output": {
+						"gamemode_rank": {
+							"$denseRank": {}
+						}
+					}
+				}
+			},
+			{
+				"$setWindowFields": {
+					"partitionBy": {
+						"has_rate": "$has_rate",
+						"platformer": "$platformer"
+					},
+					"sortBy": {"send_count": -1},
+					"output": {
+						"joined_rank": {
+							"$denseRank": {}
+						}
+					}
+				}
+			},
+			{
+				"$project": {
+					"_id": 1,
+					"send_count": 1,
+					"latest_send": 1,
+					"trending_score": 1,
+					"recent_sends": 1,
+					"last_updated": 1,
+					"rank": 1,
+					"rate_rank": 1,
+					"gamemode_rank": 1,
+					"joined_rank": 1
 				}
 			},
 			{
