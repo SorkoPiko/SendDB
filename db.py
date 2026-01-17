@@ -1104,7 +1104,7 @@ class SendDB:
 			}
 		]
 
-		sends.aggregate(pipeline)
+		sends.aggregate(pipeline, allowDiskUse=True)
 
 	def _refresh_creator_stats(self):
 		info = self.get_collection("data", "info")
@@ -1150,7 +1150,7 @@ class SendDB:
 			}
 		]
 
-		info.aggregate(pipeline)
+		info.aggregate(pipeline, allowDiskUse=True)
 
 	def get_level_stats(self, level_ids: list[int]) -> dict:
 		level_stats = self.get_collection("data", "level_stats")
