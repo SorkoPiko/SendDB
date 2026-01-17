@@ -1008,7 +1008,7 @@ class SendDB:
 			{
 				"$set": {
 					"last_updated": current_time,
-					"trending_score": {"$ifNull": ["$trending_score", 0]},
+					"trending_score": {"$ifNull": ["$trending_score", 0.0]},
 					"recent_sends": {"$ifNull": ["$recent_sends", 0]}
 				}
 			},
