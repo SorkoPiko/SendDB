@@ -1156,7 +1156,7 @@ class SendDB:
 				"$set": {
 					"trending_score": {"$ifNull": [{"$arrayElemAt": ["$trending_data.trending_score", 0]}, 0]},
 					"recent_sends": {"$ifNull": [{"$arrayElemAt": ["$trending_data.recent_sends", 0]}, 0]},
-					"send_count_variance": {"$pow": [{"$stdDevPop": "$send_counts"}, 2]},
+					"send_count_stddev": {"$stdDevPop": "$send_counts"},
 					"send_count_avg": {"$avg": "$send_counts"},
 					"last_updated": current_time
 				}
