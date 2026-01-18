@@ -928,11 +928,48 @@ class SendDB:
 		self._refresh_level_send_counts()
 		self._refresh_creator_stats()
 
+	def _get_trending_aggregation_stages(self, current_time, group_by: str) -> list[dict]:
+		thirty_days_ago = current_time - timedelta(days=30)
+		return [
+			{"$match": {"timestamp": {"$gte": thirty_days_ago}}},
+			{
+				"$addFields": {
+					"age_hours": {
+						"$divide": [
+							{"$subtract": [current_time, "$timestamp"]},
+							1000 * 60 * 60
+						]
+					}
+				}
+			},
+			{
+				"$group": {
+					"_id": group_by,
+					"trending_score": {
+						"$sum": {
+							"$multiply": [
+								25000,
+								{
+									"$divide": [
+										1,
+										{"$pow": [
+											{"$add": [{"$divide": ["$age_hours", 24]}, 2]},
+											1
+										]}
+									]
+								}
+							]
+						}
+					},
+					"recent_sends": {"$sum": 1}
+				}
+			}
+		]
+
 	def _refresh_level_send_counts(self):
 		sends = self.get_collection("data", "sends")
 
 		current_time = datetime.now(UTC)
-		thirty_days_ago = current_time - timedelta(days=30)
 
 		pipeline = [
 			{
@@ -946,45 +983,7 @@ class SendDB:
 							}
 						}
 					],
-					"trending": [
-						{
-							"$match": {
-								"timestamp": {"$gte": thirty_days_ago}
-							}
-						},
-						{
-							"$addFields": {
-								"age_hours": {
-									"$divide": [
-										{"$subtract": [current_time, "$timestamp"]},
-										1000 * 60 * 60
-									]
-								}
-							}
-						},
-						{
-							"$group": {
-								"_id": "$levelID",
-								"trending_score": {
-									"$sum": {
-										"$multiply": [
-											25000,
-											{
-												"$divide": [
-													1,
-													{"$pow": [
-														{"$add": [{"$divide": ["$age_hours", 24]}, 2]},
-														1
-													]}
-												]
-											}
-										]
-									}
-								},
-								"recent_sends": {"$sum": 1}
-							}
-						}
-					]
+					"trending": self._get_trending_aggregation_stages(current_time, "$levelID")
 				}
 			},
 			{
@@ -1109,6 +1108,8 @@ class SendDB:
 	def _refresh_creator_stats(self):
 		info = self.get_collection("data", "info")
 
+		current_time = datetime.now(UTC)
+
 		pipeline = [
 			{
 				"$lookup": {
@@ -1119,25 +1120,69 @@ class SendDB:
 				}
 			},
 			{
+				"$set": {
+					"send_count_per_level": {"$size": "$sends"}
+				}
+			},
+			{
 				"$group": {
 					"_id": "$creator",
+					"level_ids": {"$push": "$_id"},
 					"level_count": {"$sum": 1},
-					"send_count": {"$sum": {"$size": "$sends"}},
+					"send_count": {"$sum": "$send_count_per_level"},
+					"send_counts": {"$push": "$send_count_per_level"},
 					"latest_send": {"$max": {"$max": "$sends.timestamp"}}
 				}
 			},
 			{
-				"$set": {
-					"last_updated": datetime.now(UTC)
+				"$lookup": {
+					"from": "sends",
+					"let": {"creator_level_ids": "$level_ids"},
+					"pipeline": [
+						{"$match": {"$expr": {"$in": ["$levelID", "$$creator_level_ids"]}}},
+						*self._get_trending_aggregation_stages(current_time, "$levelID"),
+						{
+							"$group": {
+								"_id": None,
+								"trending_score": {"$sum": "$trending_score"},
+								"recent_sends": {"$sum": "$recent_sends"}
+							}
+						}
+					],
+					"as": "trending_data"
 				}
+			},
+			{
+				"$set": {
+					"trending_score": {"$ifNull": [{"$arrayElemAt": ["$trending_data.trending_score", 0]}, 0]},
+					"recent_sends": {"$ifNull": [{"$arrayElemAt": ["$trending_data.recent_sends", 0]}, 0]},
+					"send_count_variance": {"$pow": [{"$stdDevPop": "$send_counts"}, 2]},
+					"send_count_avg": {"$avg": "$send_counts"},
+					"last_updated": current_time
+				}
+			},
+			{
+				"$lookup": {
+					"from": "creators",
+					"localField": "_id",
+					"foreignField": "_id",
+					"as": "creator_info"
+				}
+			},
+			{"$unwind": "$creator_info"},
+			{
+				"$set": {
+					"account_id": "$creator_info.accountID"
+				}
+			},
+			{
+				"$unset": ["send_counts", "level_ids", "trending_data", "creator_info"]
 			},
 			{
 				"$setWindowFields": {
 					"sortBy": {"send_count": -1},
 					"output": {
-						"rank": {
-							"$denseRank": {}
-						}
+						"rank": {"$denseRank": {}}
 					}
 				}
 			},
