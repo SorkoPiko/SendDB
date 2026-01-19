@@ -1057,7 +1057,7 @@ class SendDB:
 			},
 			{
 				"$setWindowFields": {
-					"partitionBy": {"platformer": "$platformer"},
+					"partitionBy": "$platformer",
 					"sortBy": {"send_count": -1},
 					"output": {
 						"gamemode_rank": {
@@ -1081,6 +1081,28 @@ class SendDB:
 				}
 			},
 			{
+				"$setWindowFields": {
+					"partitionBy": "$has_rate",
+					"sortBy": {"trending_score": -1},
+					"output": {
+						"trending_rank": {
+							"$denseRank": {}
+						}
+					}
+				}
+			},
+			{
+				"$addFields": {
+					"trending_rank": {
+						"$cond": {
+							"if": "$has_rate",
+							"then": 0,
+							"else": "$trending_rank"
+						}
+					}
+				}
+			},
+			{
 				"$project": {
 					"_id": 1,
 					"send_count": 1,
@@ -1091,7 +1113,8 @@ class SendDB:
 					"rank": 1,
 					"rate_rank": 1,
 					"gamemode_rank": 1,
-					"joined_rank": 1
+					"joined_rank": 1,
+					"trending_rank": 1
 				}
 			},
 			{
@@ -1142,6 +1165,19 @@ class SendDB:
 						{"$match": {"$expr": {"$in": ["$levelID", "$$creator_level_ids"]}}},
 						*self._get_trending_aggregation_stages(current_time, "$levelID"),
 						{
+							"$lookup": {
+								"from": "rates",
+								"localField": "_id",
+								"foreignField": "_id",
+								"as": "rate"
+							}
+						},
+						{
+							"$match": {
+								"rate": {"$size": 0}
+							}
+						},
+						{
 							"$group": {
 								"_id": None,
 								"trending_score": {"$sum": "$trending_score"},
@@ -1176,14 +1212,35 @@ class SendDB:
 				}
 			},
 			{
-				"$unset": ["send_counts", "level_ids", "trending_data", "creator_info"]
-			},
-			{
 				"$setWindowFields": {
 					"sortBy": {"send_count": -1},
 					"output": {
 						"rank": {"$denseRank": {}}
 					}
+				}
+			},
+			{
+				"$setWindowFields": {
+					"sortBy": {"trending_score": -1},
+					"output": {
+						"trending_rank": {"$denseRank": {}}
+					}
+				}
+			},
+			{
+				"$project": {
+					"_id": 1,
+					"account_id": 1,
+					"level_count": 1,
+					"send_count": 1,
+					"latest_send": 1,
+					"trending_score": 1,
+					"recent_sends": 1,
+					"send_count_stddev": 1,
+					"send_count_avg": 1,
+					"last_updated": 1,
+					"rank": 1,
+					"trending_rank": 1
 				}
 			},
 			{
