@@ -1181,7 +1181,8 @@ class SendDB:
 							"$group": {
 								"_id": None,
 								"trending_score": {"$sum": "$trending_score"},
-								"recent_sends": {"$sum": "$recent_sends"}
+								"recent_sends": {"$sum": "$recent_sends"},
+								"trending_level_count": {"$sum": 1}
 							}
 						}
 					],
@@ -1192,6 +1193,7 @@ class SendDB:
 				"$set": {
 					"trending_score": {"$ifNull": [{"$arrayElemAt": ["$trending_data.trending_score", 0]}, 0]},
 					"recent_sends": {"$ifNull": [{"$arrayElemAt": ["$trending_data.recent_sends", 0]}, 0]},
+					"trending_level_count": {"$ifNull": [{"$arrayElemAt": ["$trending_data.trending_level_count", 0]}, 0]},
 					"send_count_stddev": {"$stdDevPop": "$send_counts"},
 					"send_count_avg": {"$avg": "$send_counts"},
 					"last_updated": current_time
@@ -1235,6 +1237,7 @@ class SendDB:
 					"send_count": 1,
 					"latest_send": 1,
 					"trending_score": 1,
+					"trending_level_count": 1,
 					"recent_sends": 1,
 					"send_count_stddev": 1,
 					"send_count_avg": 1,
