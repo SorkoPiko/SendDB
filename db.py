@@ -1026,39 +1026,29 @@ class SendDB:
 			{
 				"$addFields": {
 					"has_rate": {"$gt": [{"$size": "$rate"}, 0]},
-					"platformer": "$info.platformer"
+					"platformer": "$info.platformer",
+					"sort_key_send": {"score": "$send_count", "tiebreak": {"$multiply": ["$_id", -1]}},
+					"sort_key_trending": {"score": "$trending_score", "tiebreak": {"$multiply": ["$_id", -1]}}
 				}
 			},
 			{
 				"$setWindowFields": {
-					"sortBy": {"send_count": -1, "_id": 1},
-					"output": {
-						"rank": {
-							"$denseRank": {}
-						}
-					}
+					"sortBy": {"sort_key_send": -1},
+					"output": {"rank": {"$rank": {}}}
 				}
 			},
 			{
 				"$setWindowFields": {
 					"partitionBy": "$has_rate",
-					"sortBy": {"send_count": -1, "_id": 1},
-					"output": {
-						"rate_rank": {
-							"$denseRank": {}
-						}
-					}
+					"sortBy": {"sort_key_send": -1},
+					"output": {"rate_rank": {"$rank": {}}}
 				}
 			},
 			{
 				"$setWindowFields": {
 					"partitionBy": "$platformer",
-					"sortBy": {"send_count": -1, "_id": 1},
-					"output": {
-						"gamemode_rank": {
-							"$denseRank": {}
-						}
-					}
+					"sortBy": {"sort_key_send": -1},
+					"output": {"gamemode_rank": {"$rank": {}}}
 				}
 			},
 			{
@@ -1067,23 +1057,15 @@ class SendDB:
 						"has_rate": "$has_rate",
 						"platformer": "$platformer"
 					},
-					"sortBy": {"send_count": -1, "_id": 1},
-					"output": {
-						"joined_rank": {
-							"$denseRank": {}
-						}
-					}
+					"sortBy": {"sort_key_send": -1},
+					"output": {"joined_rank": {"$rank": {}}}
 				}
 			},
 			{
 				"$setWindowFields": {
 					"partitionBy": "$has_rate",
-					"sortBy": {"trending_score": -1, "_id": 1},
-					"output": {
-						"trending_rank": {
-							"$denseRank": {}
-						}
-					}
+					"sortBy": {"sort_key_trending": -1},
+					"output": {"trending_rank": {"$rank": {}}}
 				}
 			},
 			{
@@ -1209,19 +1191,21 @@ class SendDB:
 				}
 			},
 			{
-				"$setWindowFields": {
-					"sortBy": {"send_count": -1, "_id": 1},
-					"output": {
-						"rank": {"$denseRank": {}}
-					}
+				"$addFields": {
+					"sort_key_send": {"score": "$send_count", "tiebreak": {"$multiply": ["$_id", -1]}},
+					"sort_key_trending": {"score": "$trending_score", "tiebreak": {"$multiply": ["$_id", -1]}}
 				}
 			},
 			{
 				"$setWindowFields": {
-					"sortBy": {"trending_score": -1, "_id": 1},
-					"output": {
-						"trending_rank": {"$denseRank": {}}
-					}
+					"sortBy": {"sort_key_send": -1},
+					"output": {"rank": {"$rank": {}}}
+				}
+			},
+			{
+				"$setWindowFields": {
+					"sortBy": {"sort_key_trending": -1},
+					"output": {"trending_rank": {"$rank": {}}}
 				}
 			},
 			{

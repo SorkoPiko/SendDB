@@ -574,10 +574,16 @@ class LeaderboardView(View):
 			])
 
 		base_pipeline.append({
+			"$addFields": {
+				"sort_key_send": {"score": "$sends", "tiebreak": {"$multiply": ["$_id", -1]}}
+			}
+		})
+
+		base_pipeline.append({
 			"$setWindowFields": {
-				"sortBy": {"sends": -1, "_id": 1},
+				"sortBy": {"sort_key_send": -1},
 				"output": {
-					"rank": {"$denseRank": {}}
+					"rank": {"$rank": {}}
 				}
 			}
 		})
