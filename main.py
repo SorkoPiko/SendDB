@@ -575,7 +575,7 @@ class LeaderboardView(View):
 
 		base_pipeline.append({
 			"$setWindowFields": {
-				"sortBy": {"sends": -1},
+				"sortBy": {"sends": -1, "_id": 1},
 				"output": {
 					"rank": {"$denseRank": {}}
 				}

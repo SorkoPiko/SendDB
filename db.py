@@ -947,17 +947,12 @@ class SendDB:
 					"_id": group_by,
 					"trending_score": {
 						"$sum": {
-							"$multiply": [
+							"$divide": [
 								25000,
-								{
-									"$divide": [
-										1,
-										{"$pow": [
-											{"$add": [{"$divide": ["$age_hours", 24]}, 2]},
-											1
-										]}
-									]
-								}
+								{"$pow": [
+									{"$add": [{"$divide": ["$age_hours", 24]}, 2]},
+									1
+								]}
 							]
 						}
 					},
@@ -1036,7 +1031,7 @@ class SendDB:
 			},
 			{
 				"$setWindowFields": {
-					"sortBy": {"send_count": -1},
+					"sortBy": {"send_count": -1, "_id": 1},
 					"output": {
 						"rank": {
 							"$denseRank": {}
@@ -1047,7 +1042,7 @@ class SendDB:
 			{
 				"$setWindowFields": {
 					"partitionBy": "$has_rate",
-					"sortBy": {"send_count": -1},
+					"sortBy": {"send_count": -1, "_id": 1},
 					"output": {
 						"rate_rank": {
 							"$denseRank": {}
@@ -1058,7 +1053,7 @@ class SendDB:
 			{
 				"$setWindowFields": {
 					"partitionBy": "$platformer",
-					"sortBy": {"send_count": -1},
+					"sortBy": {"send_count": -1, "_id": 1},
 					"output": {
 						"gamemode_rank": {
 							"$denseRank": {}
@@ -1072,7 +1067,7 @@ class SendDB:
 						"has_rate": "$has_rate",
 						"platformer": "$platformer"
 					},
-					"sortBy": {"send_count": -1},
+					"sortBy": {"send_count": -1, "_id": 1},
 					"output": {
 						"joined_rank": {
 							"$denseRank": {}
@@ -1083,7 +1078,7 @@ class SendDB:
 			{
 				"$setWindowFields": {
 					"partitionBy": "$has_rate",
-					"sortBy": {"trending_score": -1},
+					"sortBy": {"trending_score": -1, "_id": 1},
 					"output": {
 						"trending_rank": {
 							"$denseRank": {}
@@ -1215,7 +1210,7 @@ class SendDB:
 			},
 			{
 				"$setWindowFields": {
-					"sortBy": {"send_count": -1},
+					"sortBy": {"send_count": -1, "_id": 1},
 					"output": {
 						"rank": {"$denseRank": {}}
 					}
@@ -1223,7 +1218,7 @@ class SendDB:
 			},
 			{
 				"$setWindowFields": {
-					"sortBy": {"trending_score": -1},
+					"sortBy": {"trending_score": -1, "_id": 1},
 					"output": {
 						"trending_rank": {"$denseRank": {}}
 					}
