@@ -1053,7 +1053,7 @@ async def notify_followers_of_send(level_info: dict, timestamp: datetime):
 	followers = set(level_followers + creator_followers)
 
 	embed = discord.Embed(
-		title=f"[**{level_info['name']}**](<https://senddb.dev/level#{level_info['_id']}>) was just sent!",
+		title=f"**{level_info['name']}** was just sent!",
 		description=f"By **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})\nMore data [online](<https://senddb.dev/level#{level_info['_id']}>)",
 		color=0x00ff00
 	)
