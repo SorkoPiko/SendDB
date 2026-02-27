@@ -736,7 +736,7 @@ class LeaderboardView(View):
 
 		embed = discord.Embed(
 			title=f"{self.type.value} Leaderboard",
-			description=f"Most {'level sends by creator' if self.type == LeaderboardType.CREATORS else f'sent {rate_filter}{level_filter}levels'}",
+			description=f"Most {'level sends by creator' if self.type == LeaderboardType.CREATORS else f'sent {rate_filter}{level_filter}levels'}\nView [online](<https://senddb.dev/{'creators' if self.type == LeaderboardType.CREATORS else 'levels'}>) for more details",
 			color=0x00ff00
 		)
 
@@ -1053,8 +1053,8 @@ async def notify_followers_of_send(level_info: dict, timestamp: datetime):
 	followers = set(level_followers + creator_followers)
 
 	embed = discord.Embed(
-		title=f"{level_info['name']} was just sent!",
-		description=f"By **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})",
+		title=f"[**{level_info['name']}**](<https://senddb.dev/level#{level_info['_id']}>) was just sent!",
+		description=f"By **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})\nMore data [online](<https://senddb.dev/level#{level_info['_id']}>)",
 		color=0x00ff00
 	)
 
@@ -1079,7 +1079,7 @@ async def notify_followers_of_rate(level_info: dict, timestamp: datetime):
 
 	embed = discord.Embed(
 		title=f"{level_info['name']} was just rated!",
-		description=f"Difficulty: **{level_info['stars']}**\nRating: **{level_info['rating']}** (+**{level_info['points']}**)\nBy **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})",
+		description=f"Difficulty: **{level_info['stars']}**\nRating: **{level_info['rating']}** (+**{level_info['points']}**)\nBy **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})\nMore data [online](<https://senddb.dev/level#{level_info['_id']}>)",
 		color=0xd4af37
 	)
 
@@ -1101,7 +1101,7 @@ async def sendSendsMessage(info: list[dict], timestamp: datetime):
 	for level in info:
 		embed = discord.Embed(
 			title=level["name"],
-			description=f"By **{level['creator']}** ({level['playerID']})\nTotal Sends: **{level['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level['_id']}) (`{level['_id']}`)",
+			description=f"By **{level['creator']}** ({level['playerID']})\nTotal Sends: **{level['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level['_id']}) (`{level['_id']}`)\nMore data [online](<https://senddb.dev/level#{level['_id']}>)",
 			color=0x00ff00
 		)
 
@@ -1126,7 +1126,7 @@ async def sendRatesMessage(info: list[dict], timestamp: datetime):
 	for level in info:
 		embed = discord.Embed(
 			title=level["name"],
-			description=f"Difficulty: **{level['stars']}**\nRating: **{level['rating']}** (+**{level['points']}**)\nBy **{level['creator']}** ({level['playerID']})\nTotal Sends: **{level['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level['_id']}) (`{level['_id']}`)",
+			description=f"Difficulty: **{level['stars']}**\nRating: **{level['rating']}** (+**{level['points']}**)\nBy **{level['creator']}** ({level['playerID']})\nTotal Sends: **{level['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level['_id']}) (`{level['_id']}`)\nMore data [online](<https://senddb.dev/level#{level['_id']}>)",
 			color=0xd4af37
 		)
 
@@ -1209,7 +1209,7 @@ async def check_level(interaction: discord.Interaction, level: str):
 	# Create the basic embed
 	embed = discord.Embed(
 		title=f"{levelData['name']}",
-		description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{int(lastSend.timestamp())}:F> (<t:{int(lastSend.timestamp())}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_numeric_id}) (`{level_numeric_id}`)",
+		description=f"{creatorString}Total Sends: **{sendCount}**\nLast Sent: <t:{int(lastSend.timestamp())}:F> (<t:{int(lastSend.timestamp())}:R>)\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_numeric_id}) (`{level_numeric_id}`)\nMore data [online](<https://senddb.dev/level#{level_numeric_id}>)",
 		color=0x00ff00 if level_numeric_id >= OLDEST_LEVEL else 0xff0000
 	)
 
