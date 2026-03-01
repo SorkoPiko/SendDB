@@ -1250,7 +1250,7 @@ async def check_creator(interaction: discord.Interaction, creator: str):
 
 	embed = discord.Embed(
 		title=f"{creatorData['name']}'s Stats",
-		description=f"Account ID: `{creatorData['accountID']}`\nCreator Info: [GDBrowser](https://gdbrowser.com/u/{creatorData['accountID']})\nMore data [online](<https://senddb.dev/creator#{creatorData['accountID']}>)",
+		description=f"Account ID: `{creatorData['accountID']}`\nCreator Info: [GDBrowser](https://gdbrowser.com/u/{creatorData['accountID']})\nMore data [online](<https://senddb.dev/creator#{creatorData['userID']}>)",
 		color=0x00ff00
 	)
 
