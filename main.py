@@ -300,6 +300,7 @@ class SendBot(commands.Bot):
 			f"👀 **Want to see a level's stats?** Use {await self.get_full_command_embed('check-level')} to view its sends!",
 			f"📊 **Want to see the leaderboard?** Use {await self.get_full_command_embed('leaderboard')} to view the top creators and levels!",
 			f"💬 **Need help or have suggestions?** Join our support server [here](https://discord.gg/{invite})!",
+			f"🌐 **Did you know?** You can see data online on [our website](<https://senddb.dev>)!"
 		]
 
 	async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -1249,7 +1250,7 @@ async def check_creator(interaction: discord.Interaction, creator: str):
 
 	embed = discord.Embed(
 		title=f"{creatorData['name']}'s Stats",
-		description=f"Account ID: `{creatorData['accountID']}`\nCreator Info: [GDBrowser](https://gdbrowser.com/u/{creatorData['accountID']})\n",
+		description=f"Account ID: `{creatorData['accountID']}`\nCreator Info: [GDBrowser](https://gdbrowser.com/u/{creatorData['accountID']})\nMore data [online](<https://senddb.dev/creator#{creatorData['accountID']}>)",
 		color=0x00ff00
 	)
 
