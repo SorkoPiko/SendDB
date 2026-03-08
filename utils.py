@@ -134,10 +134,14 @@ class SentChecker:
 
 		for creator in rawCreators:
 			parts = creator.split(":")
+			try:
+				accountID = int(parts[2])
+			except Exception:
+				accountID = 0
 			creators.append({
 				"_id": int(parts[0]),
 				"name": parts[1],
-				"accountID": int(parts[2])
+				"accountID": accountID
 			})
 
 		return levels, creators
