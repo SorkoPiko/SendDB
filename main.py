@@ -1048,40 +1048,34 @@ class FollowCommands(commands.GroupCog, name="follow"):
 		await sendRandomTip(interaction, exclude=[0])
 
 async def notify_followers_of_send(level_info: dict, timestamp: datetime):
+	await notify_followers_generic(
+		level_info,
+		timestamp,
+		f"**{level_info['name']}** was just sent!",
+		f"By **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})\nMore data [online](<https://senddb.dev/level#{level_info['_id']}>)",
+		0x00ff00
+	)
+
+async def notify_followers_of_rate(level_info: dict, timestamp: datetime):
+	await notify_followers_generic(
+		level_info,
+		timestamp,
+		f"{level_info['name']} was just rated!",
+		f"Difficulty: **{level_info['stars']}**\nRating: **{level_info['rating']}** (+**{level_info['points']}**)\nBy **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})\nMore data [online](<https://senddb.dev/level#{level_info['_id']}>)",
+		0xd4af37
+	)
+
+async def notify_followers_generic(level_info: dict, timestamp: datetime, title: str, description: str, color: int):
 	level_followers = db.get_followers("level", level_info["_id"])
 	creator_followers = db.get_followers("creator", level_info["playerID"])
 
 	followers = set(level_followers + creator_followers)
+	if not followers: return
 
 	embed = discord.Embed(
-		title=f"**{level_info['name']}** was just sent!",
-		description=f"By **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})\nMore data [online](<https://senddb.dev/level#{level_info['_id']}>)",
-		color=0x00ff00
-	)
-
-	if level_info["creatorID"] != 0: url = f"u/{level_info['creatorID']}"
-	else: url = f"search/{level_info['playerID']}?user"
-
-	embed.set_author(name=level_info["creator"], url=f"https://gdbrowser.com/{url}", icon_url="https://gdbrowser.com/assets/cp.png")
-	embed.timestamp = timestamp
-
-	for follower_id in followers:
-		try:
-			user = await client.fetch_user(follower_id)
-			await user.send(embed=embed)
-		except (discord.NotFound, discord.Forbidden):
-			continue
-
-async def notify_followers_of_rate(level_info: dict, timestamp: datetime):
-	level_followers = db.get_followers("level", level_info["_id"])
-	creator_followers = db.get_followers("creator", level_info["creator"])
-
-	followers = set(level_followers + creator_followers)
-
-	embed = discord.Embed(
-		title=f"{level_info['name']} was just rated!",
-		description=f"Difficulty: **{level_info['stars']}**\nRating: **{level_info['rating']}** (+**{level_info['points']}**)\nBy **{level_info['creator']}**\nTotal Sends: **{level_info['sends']}**\nLevel Info: [GDBrowser](https://gdbrowser.com/{level_info['_id']})\nMore data [online](<https://senddb.dev/level#{level_info['_id']}>)",
-		color=0xd4af37
+		title=title,
+		description=description,
+		color=color
 	)
 
 	if level_info["creatorID"] != 0: url = f"u/{level_info['creatorID']}"
