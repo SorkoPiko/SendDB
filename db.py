@@ -170,6 +170,14 @@ class SendDB:
 
 		followers_count = follows.count_documents({"type": "creator", "followed_id": creator_id})
 
+		rates = self.get_collection("data", "rates")
+		rates_pipeline = [
+			{"$match": {"_id": {"$in": level_ids}}},
+			{"$group": {"_id": None, "points": {"$sum": "$points"}}}
+		]
+		rates_result = list(rates.aggregate(rates_pipeline))
+		points = rates_result[0]["points"] if rates_result else 0
+
 		return {
 			"userID": creator_id,
 			"name": creator_info["name"],
@@ -177,7 +185,8 @@ class SendDB:
 			"sends_count": sends_result[0]["sends_count"] if sends_result else 0,
 			"latest_send": sends_result[0]["latest_send"] if sends_result else None,
 			"level_count": level_count,
-			"followers_count": followers_count
+			"followers_count": followers_count,
+			"points": points
 		}
 
 	def get_info(self, level_ids: list[int]) -> dict:
@@ -1167,12 +1176,21 @@ class SendDB:
 				}
 			},
 			{
+				"$lookup": {
+					"from": "rates",
+					"localField": "level_ids",
+					"foreignField": "_id",
+					"as": "rates"
+				}
+			},
+			{
 				"$set": {
 					"trending_score": {"$ifNull": [{"$arrayElemAt": ["$trending_data.trending_score", 0]}, 0]},
 					"recent_sends": {"$ifNull": [{"$arrayElemAt": ["$trending_data.recent_sends", 0]}, 0]},
 					"trending_level_count": {"$ifNull": [{"$arrayElemAt": ["$trending_data.trending_level_count", 0]}, 0]},
 					"send_count_stddev": {"$stdDevPop": "$send_counts"},
 					"send_count_avg": {"$avg": "$send_counts"},
+					"points": {"$sum": "$rates.points"},
 					"last_updated": current_time
 				}
 			},
@@ -1220,6 +1238,7 @@ class SendDB:
 					"recent_sends": 1,
 					"send_count_stddev": 1,
 					"send_count_avg": 1,
+					"points": 1,
 					"last_updated": 1,
 					"rank": 1,
 					"trending_rank": 1
@@ -1261,5 +1280,6 @@ class SendDB:
 			"send_count": stats["send_count"],
 			"level_count": stats["level_count"],
 			"latest_send": stats["latest_send"],
-			"rank": stats["rank"]
+			"rank": stats["rank"],
+			"points": stats.get("points", 0)
 		}

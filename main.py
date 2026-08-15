@@ -1255,6 +1255,7 @@ async def check_creator(interaction: discord.Interaction, creator: str):
 
 	embed.add_field(name="Total Sends", value=f"**{creatorData['sends_count']}**", inline=True)
 	embed.add_field(name="Level Count", value=f"**{creatorData['level_count']}**", inline=True)
+	embed.add_field(name="Points", value=f"**{creatorData.get('points', 0)}**", inline=True)
 	embed.add_field(name="Average Sends per Level", value=f"**{average_sends:.2f}**", inline=True)
 	embed.add_field(name="Followers", value=f"**{creatorData['followers_count']}**", inline=True)
 	embed.add_field(
