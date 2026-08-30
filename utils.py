@@ -251,14 +251,14 @@ class SentChecker:
 
 	@staticmethod
 	def check_errors(req):
-		if req.text == "error code: 1015": # ratelimited
+		if "error code: 1015" in req.text: # ratelimited
 			logging.warning("Ratelimited!")
 			raise Ratelimited()
 
-		if req.text == "error code: 1005": # asn ban
+		if "error code: 1005" in req.text: # asn ban
 			logging.warning("ASN Banned!")
 			raise Banned()
 
-		if req.text == "error code: 1006": # ip ban
+		if "error code: 1006" in req.text: # ip ban
 			logging.warning("IP Banned!")
 			raise Banned()
