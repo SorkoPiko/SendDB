@@ -9,4 +9,3 @@ services:
       - .env
     volumes:
       - ./previous_data.json:/app/previous_data.json
-      - ./exceptions.log:/app/exceptions.log
