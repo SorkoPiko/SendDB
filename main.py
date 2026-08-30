@@ -14,9 +14,8 @@ from db import SendDB
 import utils
 
 logging.basicConfig(
-	filename='exceptions.log',  # File to save exceptions
-	level=logging.ERROR,        # Log level
-	format='%(asctime)s - %(levelname)s - %(message)s'
+	level=logging.ERROR,
+	format='%(asctime)s - %(levelname)s - %(message)s',
 )
 
 load_dotenv()
@@ -67,19 +66,27 @@ async def is_moderator(interaction: discord.Interaction) -> bool:
 	return False
 
 def get_git_info():
-	repo = git.Repo(search_parent_directories=True)
-	commit_hash = repo.head.commit.hexsha
-	upstream_url = next(repo.remote('origin').urls)
-	return commit_hash, upstream_url
+	try:
+		repo = git.Repo(search_parent_directories=True)
+		commit_hash = repo.head.commit.hexsha
+		upstream_url = next(repo.remote('origin').urls)
+		return commit_hash, upstream_url
+	except Exception:
+		return "unknown", "https://github.com"
 
 commit_hash, upstream_url = get_git_info()
 invite = environ.get("INVITE")
 
 def load_previous_data():
-	if os.path.exists("previous_data.json"):
-		with open("previous_data.json", "r") as file:
-			data = json.load(file)
-			return data
+	if os.path.exists("previous_data.json") and os.path.isfile("previous_data.json"):
+		try:
+			with open("previous_data.json", "r") as file:
+				data = json.load(file)
+				if isinstance(data, dict):
+					return data
+		except Exception as e:
+			logging.error(f"Error loading previous_data.json: {e}")
+			return {}
 	return {}
 
 def save_previous_data(levels, rated_levels, rate_cache):
