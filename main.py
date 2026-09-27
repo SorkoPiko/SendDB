@@ -1,4 +1,6 @@
 import random
+
+import aiohttp
 import discord, os, json, re, git, asyncio, logging
 from dotenv import load_dotenv
 from os import environ
@@ -25,6 +27,8 @@ if connection_string is None:
 	raise EnvironmentError("MONGO_CONNECTION_STRING environment variable is not set.")
 
 db = SendDB(connection_string)
+
+heartbeat_url = environ.get("HEARTBEAT_URL")
 
 OLDEST_LEVEL = int(environ.get("OLDEST_LEVEL"))
 DIFFICULTIES = {
@@ -266,6 +270,7 @@ class SendBot(commands.Bot):
 		self.trendingMessage = None
 		self.synced = False
 		self.tips = []
+		self.session = aiohttp.ClientSession()
 
 	async def setup_hook(self):
 		"""This method is called before on_ready to set up initial things"""
@@ -296,6 +301,8 @@ class SendBot(commands.Bot):
 		if self.trendingChannel:
 			self.update_trending_message.start()
 		self.update_views.start()
+		if heartbeat_url:
+			self.uptime_heartbeat.start()
 
 		checker.start(asyncio.get_running_loop())
 		print(f"We have logged in as {self.user}.")
@@ -385,6 +392,15 @@ class SendBot(commands.Bot):
 			db.refresh_materialized_views()
 		except Exception as e:
 			logging.error(f"Error refreshing materialized views: {e}", exc_info=True)
+
+	@tasks.loop(seconds=30)
+	async def uptime_heartbeat(self):
+		try:
+			async with self.session.get(heartbeat_url, timeout=5) as response:
+				if response.status != 200:
+					logging.warning(f"Heartbeat request returned unexpected status code: {response.status}")
+		except Exception as e:
+			logging.error(f"Error getting heartbeat url: {e}", exc_info=True)
 
 	async def get_full_command_embed(self, command_name: str) -> str:
 		return f"</{command_name}:{await self.get_command_id(command_name)}>" if await self.get_command_id(command_name) else f"`/{command_name}`"
