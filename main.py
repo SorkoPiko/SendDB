@@ -273,12 +273,13 @@ class SendBot(commands.Bot):
 		self.trendingMessage = None
 		self.synced = False
 		self.tips = []
-		self.session = aiohttp.ClientSession()
+		self.session: aiohttp.ClientSession = None
 
 	async def setup_hook(self):
 		"""This method is called before on_ready to set up initial things"""
 		# Set up error handler for app commands
 		self.tree.on_error = self.on_app_command_error
+		self.session = aiohttp.ClientSession()
 
 	async def on_app_command_completion(self, interaction: discord.Interaction, command: app_commands.Command):
 		"""Event that triggers when a command is successfully executed"""
@@ -335,6 +336,8 @@ class SendBot(commands.Bot):
 	async def close(self):
 		checker.stop()
 		await super().close()
+		if self.session:
+			await self.session.close()
 
 	async def get_command_id(self, command_name: str):
 		bot_commands = await self.tree.fetch_commands()
