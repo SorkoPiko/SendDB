@@ -110,6 +110,8 @@ previous_rated_levels = previous_data.get("previous_rated_levels", [])
 
 RATE_CACHE_TIME = 20
 
+last_success_time = datetime.now()
+
 def calculateNewSends(levels: list[int], rated_levels: list[int], current_time: float) -> tuple[list[int], list[int]]:
 	global previous_levels, previous_rated_levels, rate_cache
 
@@ -158,6 +160,7 @@ def calculateNewSends(levels: list[int], rated_levels: list[int], current_time: 
 	return sends, rates
 
 async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[dict], rated_creators: list[dict]):
+	last_success = datetime.now()
 	if not levels or not creators or not rated_levels or not rated_creators:
 		print("No data received.")
 		return
@@ -395,6 +398,9 @@ class SendBot(commands.Bot):
 
 	@tasks.loop(seconds=30)
 	async def uptime_heartbeat(self):
+		if (datetime.now() - last_success_time).total_seconds() > 60:
+			logging.warning("Requests have not succeeded, skipping heartbeat")
+			return
 		try:
 			async with self.session.get(heartbeat_url, timeout=5) as response:
 				if response.status != 200:
