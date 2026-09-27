@@ -16,7 +16,7 @@ from db import SendDB
 import utils
 
 logging.basicConfig(
-	level=logging.ERROR,
+	level=logging.WARNING,
 	format='%(asctime)s - %(levelname)s - %(message)s',
 )
 
@@ -160,7 +160,8 @@ def calculateNewSends(levels: list[int], rated_levels: list[int], current_time: 
 	return sends, rates
 
 async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[dict], rated_creators: list[dict]):
-	last_success = datetime.now()
+	global last_success_time
+	last_success_time = datetime.now()
 	if not levels or not creators or not rated_levels or not rated_creators:
 		print("No data received.")
 		return
