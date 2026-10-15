@@ -429,7 +429,7 @@ class SendBot(commands.Bot):
 		if (datetime.now() - last_feed_change_time).total_seconds() < STALE_FEED_HOURS * 60 * 60:
 			return
 		try:
-			await self.sendChannel.send(f"⚠️ **The sent levels feed hasn't changed in {STALE_FEED_HOURS} hours!** It may have been removed.")
+			await self.sendChannel.send("⚠️ **Stale feed!**")
 			stale_feed_alerted = True
 		except Exception as e:
 			logging.error(f"Error sending stale feed alert: {e}", exc_info=True)
