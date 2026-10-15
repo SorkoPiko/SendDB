@@ -112,6 +112,10 @@ RATE_CACHE_TIME = 20
 
 last_success_time = datetime.now()
 
+STALE_FEED_HOURS = 12
+last_feed_change_time = datetime.now()
+stale_feed_alerted = False
+
 def calculateNewSends(levels: list[int], rated_levels: list[int], current_time: float) -> tuple[list[int], list[int]]:
 	global previous_levels, previous_rated_levels, rate_cache
 
@@ -160,7 +164,7 @@ def calculateNewSends(levels: list[int], rated_levels: list[int], current_time: 
 	return sends, rates
 
 async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[dict], rated_creators: list[dict]):
-	global last_success_time
+	global last_success_time, last_feed_change_time, stale_feed_alerted
 	last_success_time = datetime.now()
 	if not levels or not creators or not rated_levels or not rated_creators:
 		print("No data received.")
@@ -172,6 +176,10 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 	accountMap = {creator["_id"]: creator["accountID"] for creator in creators + rated_creators}
 	level_ids = [level["_id"] for level in levels]
 	rated_level_ids = [level["_id"] for level in rated_levels]
+
+	if level_ids != previous_levels:
+		last_feed_change_time = datetime.now()
+		stale_feed_alerted = False
 
 	new_send_ids, new_rate_ids = calculateNewSends(level_ids, rated_level_ids, timestamp.timestamp())
 
@@ -308,6 +316,7 @@ class SendBot(commands.Bot):
 		self.update_views.start()
 		if heartbeat_url:
 			self.uptime_heartbeat.start()
+		self.check_stale_feed.start()
 
 		checker.start(asyncio.get_running_loop())
 		print(f"We have logged in as {self.user}.")
@@ -411,6 +420,19 @@ class SendBot(commands.Bot):
 					logging.warning(f"Heartbeat request returned unexpected status code: {response.status}")
 		except Exception as e:
 			logging.error(f"Error getting heartbeat url: {e}", exc_info=True)
+
+	@tasks.loop(minutes=10)
+	async def check_stale_feed(self):
+		global stale_feed_alerted
+		if stale_feed_alerted:
+			return
+		if (datetime.now() - last_feed_change_time).total_seconds() < STALE_FEED_HOURS * 60 * 60:
+			return
+		try:
+			await self.sendChannel.send("⚠️ **Stale feed!**")
+			stale_feed_alerted = True
+		except Exception as e:
+			logging.error(f"Error sending stale feed alert: {e}", exc_info=True)
 
 	async def get_full_command_embed(self, command_name: str) -> str:
 		return f"</{command_name}:{await self.get_command_id(command_name)}>" if await self.get_command_id(command_name) else f"`/{command_name}`"
