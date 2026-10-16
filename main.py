@@ -93,118 +93,51 @@ def load_previous_data():
 			return {}
 	return {}
 
-def save_previous_data(levels, rated_levels, rate_cache):
+def save_previous_data(rated_levels):
 	data = {
-		"previous_levels": levels,
 		"previous_rated_levels": rated_levels,
-		"rate_cache": rate_cache,
 		"trending_message": client.trendingMessageID
 	}
 	with open("previous_data.json", "w") as file:
 		json.dump(data, file)
 
 previous_data = load_previous_data()
-previous_levels = previous_data.get("previous_levels", [])
-rate_cache = previous_data.get("pending_rates", {})
 previous_rated_levels = previous_data.get("previous_rated_levels", [])
-
-RATE_CACHE_TIME = 20
 
 last_success_time = datetime.now()
 
-STALE_FEED_HOURS = 12
-last_feed_change_time = datetime.now()
-stale_feed_alerted = False
+def calculateNewRates(rated_levels: list[int]) -> list[int]:
+	global previous_rated_levels
 
-def calculateNewSends(levels: list[int], rated_levels: list[int], current_time: float) -> tuple[list[int], list[int]]:
-	global previous_levels, previous_rated_levels, rate_cache
-
-	filtered_levels = [level for level in levels if level not in rated_levels]
-
-	if not previous_levels:
-		previous_levels = levels.copy()
+	if not previous_rated_levels:
 		previous_rated_levels = rated_levels.copy()
-		return filtered_levels.copy(), rated_levels.copy()
+		return rated_levels.copy()
 
 	rates = [level for level in rated_levels if level not in previous_rated_levels]
-	for level in rates:
-		rate_cache[level] = current_time
 
-	expired_levels = [level for level, timestamp in rate_cache.items() if current_time - timestamp > RATE_CACHE_TIME]
-	for level in expired_levels:
-		del rate_cache[level]
-
-	prev_levels_working = previous_levels.copy()
-	ignore_count = 0
-
-	for level in rate_cache.keys():
-		if level in prev_levels_working:
-			prev_levels_working.remove(level)
-			ignore_count += 1
-
-	check_limit = len(filtered_levels) - ignore_count
-	max_bumps = 0
-
-	for i in range(check_limit):
-		level = filtered_levels[i]
-		prev_index = prev_levels_working.index(level) if level in prev_levels_working else float('inf')
-
-		if i < prev_index:
-			bumps_after = i
-			total_bumps_including_this = bumps_after + 1
-			max_bumps = max(max_bumps, total_bumps_including_this)
-
-	sends = filtered_levels[:max_bumps]
-	sends.reverse()
-
-	previous_levels = levels.copy()
 	previous_rated_levels = rated_levels.copy()
-	save_previous_data(previous_levels, previous_rated_levels, rate_cache)
+	save_previous_data(previous_rated_levels)
 
-	return sends, rates
+	return rates
 
-async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: list[dict], rated_creators: list[dict]):
-	global last_success_time, last_feed_change_time, stale_feed_alerted
+async def onRateResults(rated_levels: list[dict], rated_creators: list[dict]):
+	global last_success_time
 	last_success_time = datetime.now()
-	if not levels or not creators or not rated_levels or not rated_creators:
+	if not rated_levels or not rated_creators:
 		print("No data received.")
 		return
 
 	timestamp = datetime.now(UTC)
 
-	creatorMap = {creator["_id"]: creator["name"] for creator in creators + rated_creators}
-	accountMap = {creator["_id"]: creator["accountID"] for creator in creators + rated_creators}
-	level_ids = [level["_id"] for level in levels]
+	creatorMap = {creator["_id"]: creator["name"] for creator in rated_creators}
+	accountMap = {creator["_id"]: creator["accountID"] for creator in rated_creators}
 	rated_level_ids = [level["_id"] for level in rated_levels]
 
-	if level_ids != previous_levels:
-		last_feed_change_time = datetime.now()
-		stale_feed_alerted = False
+	new_rate_ids = calculateNewRates(rated_level_ids)
 
-	new_send_ids, new_rate_ids = calculateNewSends(level_ids, rated_level_ids, timestamp.timestamp())
-
-	sends = []
 	rates = []
-	unrates = []
 	info = []
-	sendMessageInfo = []
 	rateMessageInfo = []
-
-	for level_id in new_send_ids:
-		level = next(l for l in levels if l["_id"] == level_id)
-		creator_id = level["creatorID"]
-		creator_name = creatorMap.get(creator_id, "Unknown")
-
-		sends.append({"levelID": level_id, "timestamp": timestamp})
-		info.append({"_id": level_id, "name": level["name"], "creator": creator_id, "length": level["length"], "platformer": level["platformer"]})
-		sendMessageInfo.append({
-			"_id": level_id,
-			"name": level["name"],
-			"creator": creator_name,
-			"creatorID": accountMap.get(creator_id, 0),
-			"playerID": creator_id,
-			"sends": 1
-		})
 
 	for level_id in new_rate_ids:
 		level = next(l for l in rated_levels if l["_id"] == level_id)
@@ -235,25 +168,11 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 			"sends": 0
 		})
 
-	db.add_sends(sends)
 	db.add_rates(rates)
 	db.add_info(info)
 
-	if sends or rates or unrates:
+	if rates:
 		await client.update_trending_message()
-
-	if sendMessageInfo:
-		print("New sent levels!")
-		db.add_creators(creators)
-		checkIds = [level["_id"] for level in sendMessageInfo]
-		sendMap = db.get_sends(checkIds)
-		for sendID, sendCount in sendMap.items():
-			for level in sendMessageInfo:
-				if level["_id"] == sendID:
-					level["sends"] = sendCount["count"]
-					asyncio.create_task(notify_followers_of_send(level, timestamp))
-
-		asyncio.create_task(sendSendsMessage(sendMessageInfo, timestamp))
 
 	if rateMessageInfo:
 		print("New rated levels!")
@@ -271,7 +190,7 @@ async def onSendResults(levels: list[dict], creators: list[dict], rated_levels: 
 async def sendBanNotification():
 	await client.sendChannel.send("❌ **Bot was IP Banned!**")
 
-checker = utils.SentChecker(onSendResults, sendBanNotification, db)
+checker = utils.SentChecker(onRateResults, sendBanNotification, db)
 
 class SendBot(commands.Bot):
 	def __init__(self):
@@ -316,7 +235,6 @@ class SendBot(commands.Bot):
 		self.update_views.start()
 		if heartbeat_url:
 			self.uptime_heartbeat.start()
-		self.check_stale_feed.start()
 
 		checker.start(asyncio.get_running_loop())
 		print(f"We have logged in as {self.user}.")
@@ -397,7 +315,7 @@ class SendBot(commands.Bot):
 			else:
 				self.trendingMessage = await self.trendingChannel.send(embed=embed, content=content)
 				self.trendingMessageID = self.trendingMessage.id
-				save_previous_data(previous_levels, previous_rated_levels, rate_cache)
+				save_previous_data(previous_rated_levels)
 
 		except Exception as e:
 			logging.error(f"Error updating trending message: {e}", exc_info=True)
@@ -420,19 +338,6 @@ class SendBot(commands.Bot):
 					logging.warning(f"Heartbeat request returned unexpected status code: {response.status}")
 		except Exception as e:
 			logging.error(f"Error getting heartbeat url: {e}", exc_info=True)
-
-	@tasks.loop(minutes=10)
-	async def check_stale_feed(self):
-		global stale_feed_alerted
-		if stale_feed_alerted:
-			return
-		if (datetime.now() - last_feed_change_time).total_seconds() < STALE_FEED_HOURS * 60 * 60:
-			return
-		try:
-			await self.sendChannel.send("⚠️ **Stale feed!**")
-			stale_feed_alerted = True
-		except Exception as e:
-			logging.error(f"Error sending stale feed alert: {e}", exc_info=True)
 
 	async def get_full_command_embed(self, command_name: str) -> str:
 		return f"</{command_name}:{await self.get_command_id(command_name)}>" if await self.get_command_id(command_name) else f"`/{command_name}`"
