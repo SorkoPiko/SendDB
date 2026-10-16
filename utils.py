@@ -1,6 +1,7 @@
 import logging
 
-import requests, threading, time, asyncio, queue
+import requests, threading, time, asyncio, queue, math
+from datetime import datetime, UTC
 from typing import Optional, Callable
 from db import SendDB
 
@@ -12,10 +13,18 @@ DEMON_MAP = {
 	6: 4
 }
 
+HYPED_PAGE_DELAY = 2.5
+HYPED_RETRIES = 3
+HYPED_RETRY_DELAY = 5
+HYPED_FALLBACK_TIME = 70*60
+
 class Ratelimited(Exception):
 	pass
 
 class Banned(Exception):
+	pass
+
+class InvalidResponse(Exception):
 	pass
 
 class SentChecker:
@@ -29,6 +38,8 @@ class SentChecker:
 		self.thread: Optional[threading.Thread] = None
 		self.running = threading.Event()
 		self.db = db
+		self.last_hyped_snapshot: Optional[dict] = None
+		self.last_hyped_time = 0.0
 
 	def start(self, loop: asyncio.AbstractEventLoop):
 		"""Start the worker thread with the given event loop"""
@@ -81,6 +92,11 @@ class SentChecker:
 				if username:
 					self.q.task_done()
 
+				# outside the lock so a full scan doesn't block queue_check on the event loop
+				if self.running.is_set():
+					self.checkHyped()
+					time.sleep(3)
+
 			except Ratelimited:
 				time.sleep(60*60)
 			except Banned:
@@ -92,11 +108,26 @@ class SentChecker:
 				time.sleep(10)
 
 	@staticmethod
-	def getSentLevels() -> tuple[list[dict], list[dict]]:
+	def getLevelsPage(levelType: int, page: int = 0, total: int = 0, hypeSecret: bool = False) -> tuple[list[dict], list[dict], int, int]:
 		data = {
-			"type": 27,  # new sent levels type
-			"secret": "Wmfd2893gb7"
+			"type": levelType,
+			"str": "",
+			"diff": "-",
+			"len": "-",
+			"page": page,
+			"total": total,
+			"uncompleted": 0,
+			"onlyCompleted": 0,
+			"featured": 0,
+			"original": 0,
+			"twoPlayer": 0,
+			"coins": 0,
+			"secret": "Wmfd2893gb7",
+			"gameVersion": 22,
+			"binaryVersion": 51
 		}
+		if hypeSecret:
+			data["hypeSecret"] = 1
 
 		headers = {
 			"User-Agent": ""
@@ -105,41 +136,132 @@ class SentChecker:
 		req = requests.post('http://www.boomlings.com/database/getGJLevels21.php', data=data, headers=headers)
 		SentChecker.check_errors(req)
 
-		if req.text == "-1": return [], []
+		if req.status_code != 200 or req.text == "-1":
+			raise InvalidResponse(f"HTTP {req.status_code}: {req.text[:100]}")
 
-		parsed = req.text.split("#")
-		rawLevels = parsed[0].split("|")
-		rawCreators = parsed[1].split("|")
+		try:
+			parsed = req.text.split("#")
+			rawLevels = parsed[0].split("|")
+			rawCreators = parsed[1].split("|") if parsed[1] else []
+			pageInfo = parsed[3].split(":")
 
-		levels = []
+			levels = []
 
-		for level in rawLevels:
-			parts = level.split(":")
-			data = {parts[i]: parts[i + 1] for i in range(0, len(parts), 2)}
-			_15 = int(data.get("15", 0))
-			levels.append({
-				"_id": int(data["1"]),
-				"name": data["2"],
-				"creatorID": int(data["6"]),
-				"length": _15,
-				"platformer": (_15 == 5)
-			})
+			for level in rawLevels:
+				parts = level.split(":")
+				data = {parts[i]: parts[i + 1] for i in range(0, len(parts), 2)}
+				_15 = int(data.get("15", 0))
+				levels.append({
+					"_id": int(data["1"]),
+					"name": data["2"],
+					"creatorID": int(data["6"]),
+					"length": _15,
+					"platformer": (_15 == 5)
+				})
 
-		creators = []
+			creators = []
 
-		for creator in rawCreators:
-			parts = creator.split(":")
+			for creator in rawCreators:
+				parts = creator.split(":")
+				try:
+					accountID = int(parts[2])
+				except Exception:
+					accountID = 0
+				creators.append({
+					"_id": int(parts[0]),
+					"name": parts[1],
+					"accountID": accountID
+				})
+
+			return levels, creators, int(pageInfo[0]), int(pageInfo[2])
+		except Exception as e:
+			raise InvalidResponse(f"Unparseable response ({e}): {req.text[:100]}")
+
+	@staticmethod
+	def getHypedLevels(page: int = 0, total: int = 0) -> tuple[list[dict], list[dict], int, int]:
+		return SentChecker.getLevelsPage(31, page, total, hypeSecret=True)
+
+	@staticmethod
+	def getSentLevels(page: int = 0, total: int = 0) -> tuple[list[dict], list[dict], int, int]:
+		return SentChecker.getLevelsPage(27, page, total)
+
+	def fetchWithRetries(self, fetch: Callable, *args):
+		"""Fetch a levels page, retrying failed or non-level responses."""
+		for attempt in range(HYPED_RETRIES + 1):
 			try:
-				accountID = int(parts[2])
-			except Exception:
-				accountID = 0
-			creators.append({
-				"_id": int(parts[0]),
-				"name": parts[1],
-				"accountID": accountID
-			})
+				self.db.increase_stat("requests", 1)
+				return fetch(*args)
+			except (Ratelimited, Banned):
+				raise
+			except Exception as e:
+				logging.warning(f"Levels page fetch failed (attempt {attempt + 1}/{HYPED_RETRIES + 1}): {e}")
+				if attempt < HYPED_RETRIES:
+					time.sleep(HYPED_RETRY_DELAY)
+		return None
 
-		return levels, creators
+	def checkHyped(self):
+		"""Fetch page 0 of the hyped list and run a full scan if it changed."""
+		page0 = self.fetchWithRetries(self.getHypedLevels, 0)
+		if page0 is None:
+			return
+
+		page0IDs = [level["_id"] for level in page0[0]]
+		if (
+			self.last_hyped_snapshot is not None
+			and page0IDs == self.last_hyped_snapshot["levels"][:len(page0IDs)]
+			and time.monotonic() - self.last_hyped_time < HYPED_FALLBACK_TIME
+		):
+			return
+
+		self.scanHyped(page0)
+
+	def scanHyped(self, page0: tuple[list[dict], list[dict], int, int]):
+		"""Page through the whole hyped list and store it as a snapshot."""
+		timestamp = datetime.now(UTC)
+		levels, creators, total, pageSize = page0
+		page0IDs = [level["_id"] for level in levels]
+		failedPages = []
+
+		for page in range(1, math.ceil(total / pageSize) if pageSize else 0):
+			if not self.running.is_set():
+				return
+			time.sleep(HYPED_PAGE_DELAY)
+
+			result = self.fetchWithRetries(self.getHypedLevels, page, total)
+			if result is None:
+				failedPages.append(page)
+				continue
+
+			levels = levels + result[0]
+			creators = creators + result[1]
+
+		levelIDs = [level["_id"] for level in levels]
+		snapshot = {
+			"timestamp": timestamp,
+			"levels": levelIDs,
+			"total": total,
+			"complete": not failedPages,
+			"failed_pages": failedPages
+		}
+
+		if len(set(levelIDs)) != len(levelIDs):
+			logging.warning(f"Hyped snapshot has {len(levelIDs) - len(set(levelIDs))} duplicate levels, the list may have changed mid-scan")
+
+		time.sleep(HYPED_PAGE_DELAY)
+		sentPage0 = self.fetchWithRetries(self.getSentLevels, 0)
+		if sentPage0 is not None:
+			sentIDs = [level["_id"] for level in sentPage0[0]]
+			if sentIDs != page0IDs:
+				logging.warning(f"Sent (type 27) page 0 differs from hyped page 0: {sentIDs}")
+				snapshot["sent_page0"] = sentIDs
+
+		self.db.add_hyped_snapshot(snapshot)
+		self.db.add_info([{"_id": level["_id"], "name": level["name"], "creator": level["creatorID"], "length": level["length"], "platformer": level["platformer"]} for level in levels])
+		self.db.add_creators(list({creator["_id"]: creator for creator in creators}.values()))
+
+		self.last_hyped_snapshot = snapshot
+		self.last_hyped_time = time.monotonic()
+		print(f"Stored hyped snapshot: {len(levelIDs)}/{total} levels, failed pages: {failedPages}")
 
 	@staticmethod
 	def getRatedLevels() -> tuple[list[dict], list[dict]]:

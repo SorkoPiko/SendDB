@@ -27,6 +27,9 @@ class SendDB:
 		level_stats.create_index([("send_count", -1)])
 		level_stats.create_index([("trending_score", -1)])
 
+		hyped_snapshots = self.get_collection("data", "hyped_snapshots")
+		hyped_snapshots.create_index("timestamp")
+
 	def get_database(self, db_name: str) -> Database:
 		return self.client[db_name]
 
@@ -39,6 +42,10 @@ class SendDB:
 
 		sends_collection = self.get_collection("data", "sends")
 		sends_collection.insert_many(sends)
+
+	def add_hyped_snapshot(self, snapshot: dict):
+		hyped_snapshots = self.get_collection("data", "hyped_snapshots")
+		hyped_snapshots.insert_one(snapshot)
 
 	def add_info(self, info: list[dict]):
 		if not info: return
