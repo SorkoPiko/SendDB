@@ -58,11 +58,6 @@ class SentChecker:
 					if not self.running.is_set():
 						break
 
-					levels, creators = self.getSentLevels()
-					self.db.increase_stat("requests", 1)
-
-					time.sleep(2)
-
 					if username:
 						callbacks = self.pending_checks.pop(username, [])
 						username, player_id, account_id = self.check_account(username)
@@ -79,7 +74,7 @@ class SentChecker:
 					self.db.increase_stat("requests", 1)
 					if self.running.is_set() and self.loop and not self.loop.is_closed():
 						self.loop.call_soon_threadsafe(
-							lambda: asyncio.create_task(self.callback(levels, creators, rated_levels, rated_creators))
+							lambda: asyncio.create_task(self.callback(rated_levels, rated_creators))
 						)
 					time.sleep(5)
 
