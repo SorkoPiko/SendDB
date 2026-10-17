@@ -41,6 +41,7 @@ class SentChecker:
 		self.db = db
 		self.hyped_baseline: Optional[list[int]] = None
 		self.last_hyped_time = 0.0
+		self.hyped_total = 0
 
 	def start(self, loop: asyncio.AbstractEventLoop):
 		"""Start the worker thread with the given event loop"""
@@ -109,11 +110,11 @@ class SentChecker:
 				time.sleep(10)
 
 	@staticmethod
-	def getLevelsPage(levelType: int, page: int = 0, total: int = 0, hypeSecret: bool = False) -> tuple[list[dict], list[dict], int, int]:
+	def getLevelsPage(levelType: int, page: int = 0, total: int = 0, hypeSecret: bool = False, diff: str = "-") -> tuple[list[dict], list[dict], int, int]:
 		data = {
 			"type": levelType,
 			"str": "",
-			"diff": "-",
+			"diff": diff,
 			"len": "-",
 			"page": page,
 			"total": total,
@@ -179,8 +180,8 @@ class SentChecker:
 			raise InvalidResponse(f"Unparseable response ({e}): {req.text[:100]}")
 
 	@staticmethod
-	def getHypedLevels(page: int = 0, total: int = 0) -> tuple[list[dict], list[dict], int, int]:
-		return SentChecker.getLevelsPage(31, page, total, hypeSecret=True)
+	def getHypedLevels(page: int = 0, total: int = 0, diff: str = "-") -> tuple[list[dict], list[dict], int, int]:
+		return SentChecker.getLevelsPage(31, page, total, hypeSecret=True, diff=diff)
 
 	def fetchWithRetries(self, fetch: Callable, *args):
 		"""Fetch a levels page, retrying failed or non-level responses."""
@@ -203,16 +204,35 @@ class SentChecker:
 			return
 
 		page0IDs = [level["_id"] for level in page0[0]]
+		total = page0[2]
 		if self.hyped_baseline is not None and time.monotonic() - self.last_hyped_time < HYPED_FALLBACK_TIME:
 			removed = self.getRemovedLevels(self.hyped_baseline, page0IDs)
 			if removed is not None:
-				# levels leave the list when rated, which isn't a reshuffle
+				if total != self.hyped_total - len(removed):
+					# levels joined or left somewhere past page 0
+					logging.info(f"Hyped total changed from {self.hyped_total} to {total}, rescanning")
+					self.scanHyped(page0, allowUnchangedOrder=True)
+					return
+
+				# levels leave the list when rated or expired, which isn't a reshuffle
 				if removed:
 					logging.info(f"Levels left the hyped list: {removed}")
 					self.hyped_baseline = [level for level in self.hyped_baseline if level not in removed]
+					self.hyped_total = total
+					self.addHypedEvent(datetime.now(UTC), removed, [], "page0")
 				return
 
 		self.scanHyped(page0)
+
+	def addHypedEvent(self, timestamp: datetime, removed: list[int], added: list[int], source: str):
+		"""Record levels joining or leaving the hyped list."""
+		self.db.add_hyped_event({
+			"timestamp": timestamp,
+			"removed": removed,
+			"added": added,
+			"source": source
+		})
+		print(f"Hyped list change ({source}): {len(removed)} left, {len(added)} joined")
 
 	@staticmethod
 	def getRemovedLevels(baseline: list[int], page0IDs: list[int]) -> Optional[list[int]]:
@@ -228,8 +248,10 @@ class SentChecker:
 			index += 1
 		return removed
 
-	def scanHyped(self, page0: tuple[list[dict], list[dict], int, int]):
-		"""Page through the whole hyped list and store it as a snapshot, rescanning if it moved mid-scan."""
+	def scanHyped(self, page0: tuple[list[dict], list[dict], int, int], allowUnchangedOrder: bool = False):
+		"""Page through the whole hyped list and store it as a snapshot, rescanning if it moved mid-scan.
+
+		With allowUnchangedOrder, a complete scan that only removed levels records an event instead of a snapshot."""
 		timestamp = datetime.now(UTC)
 
 		scan = None
@@ -254,12 +276,37 @@ class SentChecker:
 		levels, creators, total, failedPages, moved = scan
 
 		levelIDs = [level["_id"] for level in levels]
+		complete = not failedPages and not moved
+
+		if complete and self.hyped_baseline is not None:
+			current = set(levelIDs)
+			previous = set(self.hyped_baseline)
+			removed = [level for level in self.hyped_baseline if level not in current]
+			added = [level for level in levelIDs if level not in previous]
+
+			if allowUnchangedOrder and not added and self.getRemovedLevels(self.hyped_baseline, levelIDs) is not None:
+				if removed:
+					self.addHypedEvent(timestamp, removed, [], "total")
+				self.hyped_baseline = levelIDs.copy()
+				self.hyped_total = total
+				return
+
+			if removed or added:
+				self.addHypedEvent(timestamp, removed, added, "snapshot")
+
+		demon = self.scanHypedDemons(levelIDs)
+		if demon is None:
+			return
+		demonIDs, demonComplete = demon
+
 		snapshot = {
 			"timestamp": timestamp,
 			"levels": levelIDs,
 			"total": total,
-			"complete": not failedPages and not moved,
-			"failed_pages": failedPages
+			"complete": complete,
+			"failed_pages": failedPages,
+			"demon": demonIDs,
+			"demon_complete": demonComplete
 		}
 
 		self.db.add_hyped_snapshot(snapshot)
@@ -267,10 +314,30 @@ class SentChecker:
 		self.db.add_creators(list({creator["_id"]: creator for creator in creators}.values()))
 
 		self.hyped_baseline = levelIDs.copy()
+		self.hyped_total = total
 		self.last_hyped_time = time.monotonic()
-		print(f"Stored hyped snapshot: {len(levelIDs)}/{total} levels, failed pages: {failedPages}, moved: {moved}")
+		print(f"Stored hyped snapshot: {len(levelIDs)}/{total} levels, {len(demonIDs)} sent for demon, failed pages: {failedPages}, moved: {moved}")
 
-	def scanHypedPages(self, page0: tuple[list[dict], list[dict], int, int]):
+	def scanHypedDemons(self, levelIDs: list[int]) -> Optional[tuple[list[int], bool]]:
+		"""Scan the demon-filtered hyped list, which holds the levels sent for demon."""
+		time.sleep(HYPED_PAGE_DELAY)
+		page0 = self.fetchWithRetries(self.getHypedLevels, 0, 0, "-2")
+		if page0 is None:
+			# an empty result is also -1, so this can mean no demon sends
+			return [], False
+
+		result = self.scanHypedPages(page0, "-2")
+		if result is None:
+			return None
+		levels, _, total, failedPages, moved, _ = result
+
+		demonIDs = [level["_id"] for level in levels]
+		outside = set(demonIDs) - set(levelIDs)
+		if outside:
+			logging.warning(f"{len(outside)} demon-filtered levels aren't in the hyped snapshot")
+		return demonIDs, not failedPages and not moved and not outside
+
+	def scanHypedPages(self, page0: tuple[list[dict], list[dict], int, int], diff: str = "-"):
 		"""Fetch every page after page 0, then re-fetch page 0 to check whether the list moved."""
 		levels, creators, total, pageSize = page0
 		page0IDs = [level["_id"] for level in levels]
@@ -282,7 +349,7 @@ class SentChecker:
 				return None
 			time.sleep(HYPED_PAGE_DELAY)
 
-			result = self.fetchWithRetries(self.getHypedLevels, page, total)
+			result = self.fetchWithRetries(self.getHypedLevels, page, total, diff)
 			if result is None:
 				failedPages.append(page)
 				continue
@@ -302,7 +369,7 @@ class SentChecker:
 			moved = True
 
 		time.sleep(HYPED_PAGE_DELAY)
-		newPage0 = self.fetchWithRetries(self.getHypedLevels, 0)
+		newPage0 = self.fetchWithRetries(self.getHypedLevels, 0, 0, diff)
 		if newPage0 is not None and [level["_id"] for level in newPage0[0]] != page0IDs:
 			logging.warning("Hyped page 0 changed during scan")
 			moved = True

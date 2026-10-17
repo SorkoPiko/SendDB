@@ -30,6 +30,11 @@ class SendDB:
 		hyped_snapshots = self.get_collection("data", "hyped_snapshots")
 		hyped_snapshots.create_index("timestamp")
 
+		hyped_events = self.get_collection("data", "hyped_events")
+		hyped_events.create_index("timestamp")
+		hyped_events.create_index("removed")
+		hyped_events.create_index("added")
+
 	def get_database(self, db_name: str) -> Database:
 		return self.client[db_name]
 
@@ -46,6 +51,10 @@ class SendDB:
 	def add_hyped_snapshot(self, snapshot: dict):
 		hyped_snapshots = self.get_collection("data", "hyped_snapshots")
 		hyped_snapshots.insert_one(snapshot)
+
+	def add_hyped_event(self, event: dict):
+		hyped_events = self.get_collection("data", "hyped_events")
+		hyped_events.insert_one(event)
 
 	def add_info(self, info: list[dict]):
 		if not info: return
