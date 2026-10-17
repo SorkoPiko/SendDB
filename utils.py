@@ -38,7 +38,7 @@ class SentChecker:
 		self.thread: Optional[threading.Thread] = None
 		self.running = threading.Event()
 		self.db = db
-		self.last_hyped_snapshot: Optional[dict] = None
+		self.hyped_baseline: Optional[list[int]] = None
 		self.last_hyped_time = 0.0
 
 	def start(self, loop: asyncio.AbstractEventLoop):
@@ -206,14 +206,30 @@ class SentChecker:
 			return
 
 		page0IDs = [level["_id"] for level in page0[0]]
-		if (
-			self.last_hyped_snapshot is not None
-			and page0IDs == self.last_hyped_snapshot["levels"][:len(page0IDs)]
-			and time.monotonic() - self.last_hyped_time < HYPED_FALLBACK_TIME
-		):
-			return
+		if self.hyped_baseline is not None and time.monotonic() - self.last_hyped_time < HYPED_FALLBACK_TIME:
+			removed = self.getRemovedLevels(self.hyped_baseline, page0IDs)
+			if removed is not None:
+				# levels leave the list when rated, which isn't a reshuffle
+				if removed:
+					logging.info(f"Levels left the hyped list: {removed}")
+					self.hyped_baseline = [level for level in self.hyped_baseline if level not in removed]
+				return
 
 		self.scanHyped(page0)
+
+	@staticmethod
+	def getRemovedLevels(baseline: list[int], page0IDs: list[int]) -> Optional[list[int]]:
+		"""Return the baseline levels missing from page 0, or None if page 0 has new or reordered levels."""
+		removed = []
+		index = 0
+		for levelID in page0IDs:
+			while index < len(baseline) and baseline[index] != levelID:
+				removed.append(baseline[index])
+				index += 1
+			if index == len(baseline):
+				return None
+			index += 1
+		return removed
 
 	def scanHyped(self, page0: tuple[list[dict], list[dict], int, int]):
 		"""Page through the whole hyped list and store it as a snapshot."""
@@ -259,7 +275,7 @@ class SentChecker:
 		self.db.add_info([{"_id": level["_id"], "name": level["name"], "creator": level["creatorID"], "length": level["length"], "platformer": level["platformer"]} for level in levels])
 		self.db.add_creators(list({creator["_id"]: creator for creator in creators}.values()))
 
-		self.last_hyped_snapshot = snapshot
+		self.hyped_baseline = levelIDs.copy()
 		self.last_hyped_time = time.monotonic()
 		print(f"Stored hyped snapshot: {len(levelIDs)}/{total} levels, failed pages: {failedPages}")
 
