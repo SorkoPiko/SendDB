@@ -17,6 +17,7 @@ HYPED_PAGE_DELAY = 2.5
 HYPED_RETRIES = 3
 HYPED_RETRY_DELAY = 5
 HYPED_FALLBACK_TIME = 70*60
+HYPED_SCAN_ATTEMPTS = 3
 
 class Ratelimited(Exception):
 	pass
@@ -38,7 +39,7 @@ class SentChecker:
 		self.thread: Optional[threading.Thread] = None
 		self.running = threading.Event()
 		self.db = db
-		self.last_hyped_snapshot: Optional[dict] = None
+		self.hyped_baseline: Optional[list[int]] = None
 		self.last_hyped_time = 0.0
 
 	def start(self, loop: asyncio.AbstractEventLoop):
@@ -181,10 +182,6 @@ class SentChecker:
 	def getHypedLevels(page: int = 0, total: int = 0) -> tuple[list[dict], list[dict], int, int]:
 		return SentChecker.getLevelsPage(31, page, total, hypeSecret=True)
 
-	@staticmethod
-	def getSentLevels(page: int = 0, total: int = 0) -> tuple[list[dict], list[dict], int, int]:
-		return SentChecker.getLevelsPage(27, page, total)
-
 	def fetchWithRetries(self, fetch: Callable, *args):
 		"""Fetch a levels page, retrying failed or non-level responses."""
 		for attempt in range(HYPED_RETRIES + 1):
@@ -206,25 +203,83 @@ class SentChecker:
 			return
 
 		page0IDs = [level["_id"] for level in page0[0]]
-		if (
-			self.last_hyped_snapshot is not None
-			and page0IDs == self.last_hyped_snapshot["levels"][:len(page0IDs)]
-			and time.monotonic() - self.last_hyped_time < HYPED_FALLBACK_TIME
-		):
-			return
+		if self.hyped_baseline is not None and time.monotonic() - self.last_hyped_time < HYPED_FALLBACK_TIME:
+			removed = self.getRemovedLevels(self.hyped_baseline, page0IDs)
+			if removed is not None:
+				# levels leave the list when rated, which isn't a reshuffle
+				if removed:
+					logging.info(f"Levels left the hyped list: {removed}")
+					self.hyped_baseline = [level for level in self.hyped_baseline if level not in removed]
+				return
 
 		self.scanHyped(page0)
 
+	@staticmethod
+	def getRemovedLevels(baseline: list[int], page0IDs: list[int]) -> Optional[list[int]]:
+		"""Return the baseline levels missing from page 0, or None if page 0 has new or reordered levels."""
+		removed = []
+		index = 0
+		for levelID in page0IDs:
+			while index < len(baseline) and baseline[index] != levelID:
+				removed.append(baseline[index])
+				index += 1
+			if index == len(baseline):
+				return None
+			index += 1
+		return removed
+
 	def scanHyped(self, page0: tuple[list[dict], list[dict], int, int]):
-		"""Page through the whole hyped list and store it as a snapshot."""
+		"""Page through the whole hyped list and store it as a snapshot, rescanning if it moved mid-scan."""
 		timestamp = datetime.now(UTC)
+
+		scan = None
+		for attempt in range(HYPED_SCAN_ATTEMPTS):
+			if page0 is None:
+				time.sleep(HYPED_PAGE_DELAY)
+				page0 = self.fetchWithRetries(self.getHypedLevels, 0)
+				if page0 is None:
+					break
+
+			result = self.scanHypedPages(page0)
+			if result is None:
+				return
+			scan, page0 = result[:5], result[5]
+
+			if not scan[4]:
+				break
+			logging.warning(f"Hyped list moved during scan (attempt {attempt + 1}/{HYPED_SCAN_ATTEMPTS})")
+
+		if scan is None:
+			return
+		levels, creators, total, failedPages, moved = scan
+
+		levelIDs = [level["_id"] for level in levels]
+		snapshot = {
+			"timestamp": timestamp,
+			"levels": levelIDs,
+			"total": total,
+			"complete": not failedPages and not moved,
+			"failed_pages": failedPages
+		}
+
+		self.db.add_hyped_snapshot(snapshot)
+		self.db.add_info([{"_id": level["_id"], "name": level["name"], "creator": level["creatorID"], "length": level["length"], "platformer": level["platformer"]} for level in levels])
+		self.db.add_creators(list({creator["_id"]: creator for creator in creators}.values()))
+
+		self.hyped_baseline = levelIDs.copy()
+		self.last_hyped_time = time.monotonic()
+		print(f"Stored hyped snapshot: {len(levelIDs)}/{total} levels, failed pages: {failedPages}, moved: {moved}")
+
+	def scanHypedPages(self, page0: tuple[list[dict], list[dict], int, int]):
+		"""Fetch every page after page 0, then re-fetch page 0 to check whether the list moved."""
 		levels, creators, total, pageSize = page0
 		page0IDs = [level["_id"] for level in levels]
 		failedPages = []
+		moved = False
 
 		for page in range(1, math.ceil(total / pageSize) if pageSize else 0):
 			if not self.running.is_set():
-				return
+				return None
 			time.sleep(HYPED_PAGE_DELAY)
 
 			result = self.fetchWithRetries(self.getHypedLevels, page, total)
@@ -232,36 +287,27 @@ class SentChecker:
 				failedPages.append(page)
 				continue
 
+			if result[2] != total:
+				logging.warning(f"Hyped page {page} reports total {result[2]}, page 0 reported {total}")
+				moved = True
 			levels = levels + result[0]
 			creators = creators + result[1]
 
 		levelIDs = [level["_id"] for level in levels]
-		snapshot = {
-			"timestamp": timestamp,
-			"levels": levelIDs,
-			"total": total,
-			"complete": not failedPages,
-			"failed_pages": failedPages
-		}
-
+		if not failedPages and len(levelIDs) != total:
+			logging.warning(f"Hyped scan collected {len(levelIDs)} levels, total is {total}")
+			moved = True
 		if len(set(levelIDs)) != len(levelIDs):
-			logging.warning(f"Hyped snapshot has {len(levelIDs) - len(set(levelIDs))} duplicate levels, the list may have changed mid-scan")
+			logging.warning(f"Hyped scan has {len(levelIDs) - len(set(levelIDs))} duplicate levels")
+			moved = True
 
 		time.sleep(HYPED_PAGE_DELAY)
-		sentPage0 = self.fetchWithRetries(self.getSentLevels, 0)
-		if sentPage0 is not None:
-			sentIDs = [level["_id"] for level in sentPage0[0]]
-			if sentIDs != page0IDs:
-				logging.warning(f"Sent (type 27) page 0 differs from hyped page 0: {sentIDs}")
-				snapshot["sent_page0"] = sentIDs
+		newPage0 = self.fetchWithRetries(self.getHypedLevels, 0)
+		if newPage0 is not None and [level["_id"] for level in newPage0[0]] != page0IDs:
+			logging.warning("Hyped page 0 changed during scan")
+			moved = True
 
-		self.db.add_hyped_snapshot(snapshot)
-		self.db.add_info([{"_id": level["_id"], "name": level["name"], "creator": level["creatorID"], "length": level["length"], "platformer": level["platformer"]} for level in levels])
-		self.db.add_creators(list({creator["_id"]: creator for creator in creators}.values()))
-
-		self.last_hyped_snapshot = snapshot
-		self.last_hyped_time = time.monotonic()
-		print(f"Stored hyped snapshot: {len(levelIDs)}/{total} levels, failed pages: {failedPages}")
+		return levels, creators, total, failedPages, moved, newPage0
 
 	@staticmethod
 	def getRatedLevels() -> tuple[list[dict], list[dict]]:
