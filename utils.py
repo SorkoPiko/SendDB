@@ -447,13 +447,19 @@ class SentChecker:
 		}
 
 		req = requests.post('http://www.boomlings.com/database/getGJUsers20.php', data=data, headers=headers)
+		SentChecker.check_errors(req)
+
+		if req.status_code != 200:
+			raise InvalidResponse(f"HTTP {req.status_code}: {req.text[:100]}")
 
 		if req.text == "-1": return "", 0, 0
 
-		split = req.text.split(":")
-		pairs = {int(split[i]): split[i+1] for i in range(0, len(split), 2)}
-
-		return pairs[1], int(pairs[2]), int(pairs[16])
+		try:
+			split = req.text.split("#")[0].split("|")[0].split(":")
+			pairs = {int(split[i]): split[i+1] for i in range(0, len(split), 2)}
+			return pairs[1], int(pairs[2]), int(pairs[16])
+		except Exception as e:
+			raise InvalidResponse(f"Unparseable response ({e}): {req.text[:100]}")
 
 	def queue_check(self, username: str, callback: Callable, user: int, *args):
 		"""Queue a username for checking, avoiding duplicates."""
