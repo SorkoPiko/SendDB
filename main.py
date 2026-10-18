@@ -196,6 +196,7 @@ class SendBot(commands.Bot):
 		self.trendingMessageID = previous_data.get("trending_message", None)
 		self.trendingMessage = None
 		self.synced = False
+		self.started = False
 		self.tips = []
 		self.session: aiohttp.ClientSession = None
 
@@ -226,13 +227,16 @@ class SendBot(commands.Bot):
 			print("Send channel not found or not news.")
 
 		self.trendingChannel = (self.get_channel(int(environ.get('TRENDING_CHANNEL_ID'))) or await self.fetch_channel(int(environ.get('TRENDING_CHANNEL_ID'))))
-		if self.trendingChannel:
-			self.update_trending_message.start()
-		self.update_views.start()
-		if heartbeat_url:
-			self.uptime_heartbeat.start()
+		# on_ready fires again after a reconnect, but the loops and worker keep running
+		if not self.started:
+			if self.trendingChannel:
+				self.update_trending_message.start()
+			self.update_views.start()
+			if heartbeat_url:
+				self.uptime_heartbeat.start()
 
-		checker.start(asyncio.get_running_loop())
+			checker.start(asyncio.get_running_loop())
+			self.started = True
 		print(f"We have logged in as {self.user}.")
 
 		client.tips = [
