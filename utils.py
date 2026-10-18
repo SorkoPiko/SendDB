@@ -38,6 +38,7 @@ class SentChecker:
 		self.loop: Optional[asyncio.AbstractEventLoop] = None
 		self.thread: Optional[threading.Thread] = None
 		self.running = threading.Event()
+		self.stopping = threading.Event()
 		self.db = db
 		self.hyped_baseline: Optional[list[int]] = None
 		self.last_hyped_time = 0.0
@@ -47,6 +48,7 @@ class SentChecker:
 	def start(self, loop: asyncio.AbstractEventLoop):
 		"""Start the worker thread with the given event loop"""
 		self.loop = loop
+		self.stopping.clear()
 		self.running.set()
 		self.thread = threading.Thread(target=self.worker)
 		self.thread.daemon = True
@@ -56,7 +58,8 @@ class SentChecker:
 		"""Stop the worker thread"""
 		if self.running.is_set():
 			self.running.clear()
-			self.q.put((None, None))
+			self.stopping.set()
+			self.q.put(None)
 			if self.thread:
 				self.thread.join(timeout=5)
 
@@ -68,29 +71,24 @@ class SentChecker:
 				username = None
 
 			try:
-				with self.lock:
-					if not self.running.is_set():
-						break
+				if not self.running.is_set():
+					break
 
-					if username:
+				if username:
+					# only pending_checks is shared with the event loop, so the requests run unlocked
+					with self.lock:
 						callbacks = self.pending_checks.pop(username, [])
-						username, player_id, account_id = self.check_account(username)
-						self.db.increase_stat("requests", 1)
-						for callback, args, _ in callbacks:
-							if self.running.is_set() and self.loop and not self.loop.is_closed():
-								self.loop.call_soon_threadsafe(
-									lambda: asyncio.create_task(callback(username, player_id, account_id, *args))
-								)
-
-					time.sleep(3)
-
-					rated_levels, rated_creators = self.getRatedLevels()
+					name, player_id, account_id = self.check_account(username)
 					self.db.increase_stat("requests", 1)
-					if self.running.is_set() and self.loop and not self.loop.is_closed():
-						self.loop.call_soon_threadsafe(
-							lambda: asyncio.create_task(self.callback(rated_levels, rated_creators))
-						)
-					time.sleep(5)
+					for callback, args, _ in callbacks:
+						self.runCallback(callback, name, player_id, account_id, *args)
+
+				time.sleep(3)
+
+				rated_levels, rated_creators = self.getRatedLevels()
+				self.db.increase_stat("requests", 1)
+				self.runCallback(self.callback, rated_levels, rated_creators)
+				time.sleep(5)
 
 				if username:
 					self.q.task_done()
@@ -101,14 +99,27 @@ class SentChecker:
 					time.sleep(3)
 
 			except Ratelimited:
-				time.sleep(60*60)
+				# wakes early on stop()
+				self.stopping.wait(60*60)
 			except Banned:
 				if self.ban_callback:
 					asyncio.run_coroutine_threadsafe(self.ban_callback(), self.loop)
 				break
 			except Exception as e:
 				logging.error(f"Error in worker thread: {e}", exc_info=True)
-				time.sleep(10)
+				self.stopping.wait(10)
+
+	def runCallback(self, callback: Callable, *args):
+		"""Schedule a coroutine callback on the event loop with these arguments."""
+		if not (self.running.is_set() and self.loop and not self.loop.is_closed()):
+			return
+		future = asyncio.run_coroutine_threadsafe(callback(*args), self.loop)
+		future.add_done_callback(self.logCallbackError)
+
+	@staticmethod
+	def logCallbackError(future):
+		if not future.cancelled() and future.exception():
+			logging.error("Error in checker callback", exc_info=future.exception())
 
 	@staticmethod
 	def getLevelsPage(levelType: int, page: int = 0, total: int = 0, hypeSecret: bool = False, diff: str = "-") -> tuple[list[dict], list[dict], int, int]:
@@ -398,7 +409,7 @@ class SentChecker:
 
 		parsed = req.text.split("#")
 		rawLevels = parsed[0].split("|")
-		rawCreators = parsed[1].split("|")
+		rawCreators = parsed[1].split("|") if parsed[1] else []
 
 		levels = []
 
@@ -423,10 +434,14 @@ class SentChecker:
 
 		for creator in rawCreators:
 			parts = creator.split(":")
+			try:
+				accountID = int(parts[2])
+			except Exception:
+				accountID = 0
 			creators.append({
 				"_id": int(parts[0]),
 				"name": parts[1],
-				"accountID": int(parts[2])
+				"accountID": accountID
 			})
 
 		return levels, creators
@@ -443,13 +458,19 @@ class SentChecker:
 		}
 
 		req = requests.post('http://www.boomlings.com/database/getGJUsers20.php', data=data, headers=headers)
+		SentChecker.check_errors(req)
+
+		if req.status_code != 200:
+			raise InvalidResponse(f"HTTP {req.status_code}: {req.text[:100]}")
 
 		if req.text == "-1": return "", 0, 0
 
-		split = req.text.split(":")
-		pairs = {int(split[i]): split[i+1] for i in range(0, len(split), 2)}
-
-		return pairs[1], int(pairs[2]), int(pairs[16])
+		try:
+			split = req.text.split("#")[0].split("|")[0].split(":")
+			pairs = {int(split[i]): split[i+1] for i in range(0, len(split), 2)}
+			return pairs[1], int(pairs[2]), int(pairs[16])
+		except Exception as e:
+			raise InvalidResponse(f"Unparseable response ({e}): {req.text[:100]}")
 
 	def queue_check(self, username: str, callback: Callable, user: int, *args):
 		"""Queue a username for checking, avoiding duplicates."""
