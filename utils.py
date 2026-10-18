@@ -42,6 +42,7 @@ class SentChecker:
 		self.hyped_baseline: Optional[list[int]] = None
 		self.last_hyped_time = 0.0
 		self.hyped_total = 0
+		self.hyped_baseline_complete = False
 
 	def start(self, loop: asyncio.AbstractEventLoop):
 		"""Start the worker thread with the given event loop"""
@@ -282,13 +283,15 @@ class SentChecker:
 			current = set(levelIDs)
 			previous = set(self.hyped_baseline)
 			removed = [level for level in self.hyped_baseline if level not in current]
-			added = [level for level in levelIDs if level not in previous]
+			# an incomplete baseline is missing levels, which would look like joins
+			added = [level for level in levelIDs if level not in previous] if self.hyped_baseline_complete else []
 
 			if allowUnchangedOrder and not added and self.getRemovedLevels(self.hyped_baseline, levelIDs) is not None:
 				if removed:
 					self.addHypedEvent(timestamp, removed, [], "total")
 				self.hyped_baseline = levelIDs.copy()
 				self.hyped_total = total
+				self.hyped_baseline_complete = True
 				return
 
 			if removed or added:
@@ -315,6 +318,7 @@ class SentChecker:
 
 		self.hyped_baseline = levelIDs.copy()
 		self.hyped_total = total
+		self.hyped_baseline_complete = complete
 		self.last_hyped_time = time.monotonic()
 		print(f"Stored hyped snapshot: {len(levelIDs)}/{total} levels, {len(demonIDs)} sent for demon, failed pages: {failedPages}, moved: {moved}")
 
