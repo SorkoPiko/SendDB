@@ -68,29 +68,24 @@ class SentChecker:
 				username = None
 
 			try:
-				with self.lock:
-					if not self.running.is_set():
-						break
+				if not self.running.is_set():
+					break
 
-					if username:
+				if username:
+					# only pending_checks is shared with the event loop, so the requests run unlocked
+					with self.lock:
 						callbacks = self.pending_checks.pop(username, [])
-						username, player_id, account_id = self.check_account(username)
-						self.db.increase_stat("requests", 1)
-						for callback, args, _ in callbacks:
-							if self.running.is_set() and self.loop and not self.loop.is_closed():
-								self.loop.call_soon_threadsafe(
-									lambda: asyncio.create_task(callback(username, player_id, account_id, *args))
-								)
-
-					time.sleep(3)
-
-					rated_levels, rated_creators = self.getRatedLevels()
+					name, player_id, account_id = self.check_account(username)
 					self.db.increase_stat("requests", 1)
-					if self.running.is_set() and self.loop and not self.loop.is_closed():
-						self.loop.call_soon_threadsafe(
-							lambda: asyncio.create_task(self.callback(rated_levels, rated_creators))
-						)
-					time.sleep(5)
+					for callback, args, _ in callbacks:
+						self.runCallback(callback, name, player_id, account_id, *args)
+
+				time.sleep(3)
+
+				rated_levels, rated_creators = self.getRatedLevels()
+				self.db.increase_stat("requests", 1)
+				self.runCallback(self.callback, rated_levels, rated_creators)
+				time.sleep(5)
 
 				if username:
 					self.q.task_done()
@@ -109,6 +104,18 @@ class SentChecker:
 			except Exception as e:
 				logging.error(f"Error in worker thread: {e}", exc_info=True)
 				time.sleep(10)
+
+	def runCallback(self, callback: Callable, *args):
+		"""Schedule a coroutine callback on the event loop with these arguments."""
+		if not (self.running.is_set() and self.loop and not self.loop.is_closed()):
+			return
+		future = asyncio.run_coroutine_threadsafe(callback(*args), self.loop)
+		future.add_done_callback(self.logCallbackError)
+
+	@staticmethod
+	def logCallbackError(future):
+		if not future.cancelled() and future.exception():
+			logging.error("Error in checker callback", exc_info=future.exception())
 
 	@staticmethod
 	def getLevelsPage(levelType: int, page: int = 0, total: int = 0, hypeSecret: bool = False, diff: str = "-") -> tuple[list[dict], list[dict], int, int]:
