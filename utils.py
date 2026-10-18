@@ -38,6 +38,7 @@ class SentChecker:
 		self.loop: Optional[asyncio.AbstractEventLoop] = None
 		self.thread: Optional[threading.Thread] = None
 		self.running = threading.Event()
+		self.stopping = threading.Event()
 		self.db = db
 		self.hyped_baseline: Optional[list[int]] = None
 		self.last_hyped_time = 0.0
@@ -47,6 +48,7 @@ class SentChecker:
 	def start(self, loop: asyncio.AbstractEventLoop):
 		"""Start the worker thread with the given event loop"""
 		self.loop = loop
+		self.stopping.clear()
 		self.running.set()
 		self.thread = threading.Thread(target=self.worker)
 		self.thread.daemon = True
@@ -56,6 +58,7 @@ class SentChecker:
 		"""Stop the worker thread"""
 		if self.running.is_set():
 			self.running.clear()
+			self.stopping.set()
 			self.q.put(None)
 			if self.thread:
 				self.thread.join(timeout=5)
@@ -96,14 +99,15 @@ class SentChecker:
 					time.sleep(3)
 
 			except Ratelimited:
-				time.sleep(60*60)
+				# wakes early on stop()
+				self.stopping.wait(60*60)
 			except Banned:
 				if self.ban_callback:
 					asyncio.run_coroutine_threadsafe(self.ban_callback(), self.loop)
 				break
 			except Exception as e:
 				logging.error(f"Error in worker thread: {e}", exc_info=True)
-				time.sleep(10)
+				self.stopping.wait(10)
 
 	def runCallback(self, callback: Callable, *args):
 		"""Schedule a coroutine callback on the event loop with these arguments."""
