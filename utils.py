@@ -56,7 +56,7 @@ class SentChecker:
 		"""Stop the worker thread"""
 		if self.running.is_set():
 			self.running.clear()
-			self.q.put((None, None))
+			self.q.put(None)
 			if self.thread:
 				self.thread.join(timeout=5)
 
